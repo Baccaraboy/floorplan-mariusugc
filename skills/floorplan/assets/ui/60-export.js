@@ -35,6 +35,7 @@
     PLAN
       ? { id: 'health', label: t('export.part.review'), hint: t('export.part.review.hint'), on: false, has: !!G.health?.issues?.length }
       : { id: 'health', label: t('export.part.health'), hint: t('export.part.health.hint'), on: false, warn: true, has: !!G.health?.issues?.length },
+    { id: 'ops', label: t('export.part.ops'), hint: t('export.part.ops.hint'), on: false, has: !!G.ops?.items?.length },
   ].filter((p) => p.has);
 
   async function download(el, close) {

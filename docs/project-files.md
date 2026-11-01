@@ -16,6 +16,7 @@ Floorplan writes to exactly two places in your project: the `floorplan/` folder,
 | `layers.json` | Optional: which files are the system you could publish, which are the setup of this installation, and which are your content, by patterns. Drives the **Layers** switch and the Publishability findings. The private word list it names is not in this folder: keep it outside the repo | **Yes** |
 | `plan.json` | Blueprints only: the planned files, endpoints and screens, who may use each endpoint, the stack, assumptions and open questions. Names and descriptions live here instead of `descriptions/` | **Yes** |
 | `recent-work.json` | What was just worked on, and why. Replaced on every update | Rarely. The AI writes it |
+| `ops.json` | Optional: what is running, from your own cron, pipeline or deploy script: a status per part, file, endpoint or target, the deployed version, the last runs and the last error. Drives the **Ops** switch and the **Operations** panel. Floorplan and the AI never write it | Your tooling does |
 | `custom-flows.json` | Flows requested from the map | Only to delete one |
 | `serve.mjs` | Serves the map locally and answers questions through the Claude Code CLI or Codex | No |
 | `query.mjs` | Looks things up in the map from the command line; Claude and Codex use it too | No |
@@ -75,7 +76,7 @@ Sometimes the map's inputs belong in the repo: so a fresh clone, or an AI worker
 { "git": "inputs", "project": { "name": "Acme Shop" }, "nodes": [] }
 ```
 
-- **`floorplan/.gitignore`** then ignores only what a build writes again: `index.html`, `graph.json`, `artifact.html`, `query.mjs`, `serve.mjs`, `recent-work.json`, `.cache/` and exported `*-map.html` copies. It no longer ignores itself.
+- **`floorplan/.gitignore`** then ignores only what a build writes again: `index.html`, `graph.json`, `artifact.html`, `query.mjs`, `serve.mjs`, `recent-work.json`, `.cache/` and exported `*-map.html` copies, plus `ops.json`, which your tooling rewrites with every run. It no longer ignores itself.
 - **What can be committed:** `architecture.json`, `descriptions/`, `names.json`, `targets.json`, `layers.json`, `plan.json`, `custom-flows.json`, `.gitignore` and `MAP.md`. Floorplan never commits anything: after a build, you (or the session that owns the repo) do.
 - **`MAP.md`** is the map as text, whatever `git` says. It's written again only when its text changes (the `As of` line doesn't count), so a committed copy changes when the map does, not on every build. A worker reads it first and changes the inputs, never that file. Its format is in [schema.md](../skills/floorplan/references/schema.md#mapmd).
 - **A fresh clone** has the inputs and `MAP.md`, but no map yet. `status.mjs` says so, and `refresh.mjs` scans the code and builds one from the inputs (a blueprint is redrawn from `plan.json`).

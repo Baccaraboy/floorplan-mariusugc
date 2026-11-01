@@ -2,7 +2,7 @@
 
 `floorplan/architecture.json` describes the structure: subsystems, modules, external services, flows. Names and descriptions for individual files and routes go in `floorplan/descriptions/*.json` instead (see [writing-descriptions.md](writing-descriptions.md)). They're kept separate so parallel agents can write them without conflicts. `build.mjs` checks both against the scan and reports problems by field.
 
-Contents: [Top level](#top-level) · [nodes](#nodes) · [Assignment rules](#how-files-get-assigned) · [edges](#edges) · [annotations](#annotations) · [flows](#flows) · [Recent work](#recent-work) · [Fixed names](#fixed-names) · [Targets](#targets) · [Layers](#layers) · [git](#git) · [Full example](#full-example)
+Contents: [Top level](#top-level) · [nodes](#nodes) · [Assignment rules](#how-files-get-assigned) · [edges](#edges) · [annotations](#annotations) · [flows](#flows) · [Recent work](#recent-work) · [Fixed names](#fixed-names) · [Targets](#targets) · [Layers](#layers) · [Operations](#operations) · [git](#git) · [Full example](#full-example)
 
 ## Top level
 
@@ -251,12 +251,46 @@ Tests and fixtures are left out of all but the private words: their ids and addr
 
 A plain text file with one word or name per line; lines starting with `#` are skipped, and entries under two characters are left out (they would match almost anywhere). It belongs outside the repo, for example in your home folder, and is never committed: the build reads it, finds the words, and writes only their first letter and where they are, never the words, nor the list's path. If the file isn't there, the build says so and skips that check. If it's inside the project and git doesn't ignore it, the build warns.
 
+## operations
+
+`floorplan/ops.json` is optional, and it is the one file in the folder that **the owner's own tooling writes**: a cron job, a deploy pipeline, a script on the server. It says what is running right now: a status per part, file, endpoint or target, the version that is deployed, when it last ran and last ran well, the last error, a note and a few numbers. Floorplan only knows the code; it never knows what runs, so neither the build nor the agent ever writes this file or makes a status up. If the user hands you the data ("the worker is down since 3 am"), you may write what they said, nothing more. The map shows the file as an overlay under an **Ops** switch, like recent work.
+
+```json
+{
+  "asOf": "2026-11-01T04:00:00+01:00",
+  "source": "tools/ops-export.sh",
+  "items": [
+    { "ref": "api", "status": "ok", "version": "v2026.11.01", "lastRun": "2026-11-01T03:40:00+01:00",
+      "lastOk": "2026-11-01T03:40:00+01:00", "lastError": "", "note": "Cron every 5 min",
+      "metrics": { "runs today": 12, "queue": 0 } },
+    { "ref": "POST /api/notes", "status": "down", "lastRun": "2026-11-01T02:00:00+01:00", "lastError": "503 from the notes service" },
+    { "ref": "orders-db", "status": "warn", "note": "Backup overdue" }
+  ]
+}
+```
+
+| field | meaning |
+|---|---|
+| `asOf` | required: when the file was written (ISO 8601). Older than 24 hours, the file is **stale**: the build warns (`OPS  stale: as of …`) and the map says so. Missing, the file's own modification time stands in, with a warning |
+| `source` | optional: what writes the file, shown in the panel |
+| `items[].ref` | a node id, a file path, `"METHOD /path"` exactly as on the map, or a target id from [targets.json](#targets), which marks the target's box. A ref that isn't on the map is left out with a warning, like recent work |
+| `items[].status` | `ok` · `warn` · `down` · `unknown` (the default, also for anything else) |
+| `items[].version`, `lastRun`, `lastOk`, `lastError`, `note` | optional, one line each (a longer text is cut to its first line). `lastRun` and `lastOk` are dates (ISO 8601) |
+| `items[].metrics` | optional: a small object of label → number or short text, shown as it is (up to 12) |
+
+- **Warnings, never errors.** The file comes from a machine, so nothing in it can break a build: a bad field, an unknown ref, a missing `asOf` or a file that isn't JSON is a warning, and the rest is shown.
+- **In `graph.json`:** `graph.ops` = `{ asOf, source, stale, counts, items }`, with each item's `id` on the map. The build reports `OPS  N items: a ok · b warn · c down · d unknown (as of …)`, or `OPS  none (no ops.json)`.
+- **On the map:** every box with an item gets a status dot (green, amber, red, grey) and the details on hover; a part shows the worst status of everything inside it, so an endpoint that is down turns its server red too. The **Operations** panel lists every item worst first, and a click goes to its box. While the map is served by `serve.mjs`, the page fetches the file again every minute, so the owner's cron can rewrite it between builds; a static copy keeps what the build saw.
+- **Not in `MAP.md`**, and never a pointer to it there: the file changes with every run, and `MAP.md` is written only when the map changes. An exported copy carries it only when asked (`--include ops`). With `"git": "inputs"` the folder's `.gitignore` ignores it, like `recent-work.json`.
+
+What a script has to produce: the JSON above, written whole (write to a temporary file and rename it, so the server never hands out a half-written file), with `asOf` set every time, refs spelled as the map spells them (node ids from architecture.json, paths relative to the codebase root, `"METHOD /path"` as the worksheets print it, target ids from targets.json), and statuses from the four words only.
+
 ## git
 
 `"git"` in architecture.json says whether the map's files may go in git. Every script that writes the folder reads it and rewrites the folder's own `.gitignore` to match, so the mode lives in architecture.json, not in that file.
 
 - **`"none"`** (the default, and what a missing field means): the `.gitignore` in `floorplan/` ignores everything in the folder, itself included. Nothing of the map is ever committed, and `git status` doesn't show the folder.
-- **`"inputs"`**: the `.gitignore` ignores only what a build writes again: `index.html`, `graph.json`, `artifact.html`, `query.mjs`, `serve.mjs`, `recent-work.json`, `.cache/` and an exported `<project>-map.html`. What is left can be committed: `architecture.json`, `plan.json`, `names.json`, `targets.json`, `layers.json`, `custom-flows.json`, `descriptions/`, `MAP.md` and the `.gitignore` itself. Floorplan only reads and writes files; it never commits anything.
+- **`"inputs"`**: the `.gitignore` ignores only what a build writes again: `index.html`, `graph.json`, `artifact.html`, `query.mjs`, `serve.mjs`, `recent-work.json`, `.cache/` and an exported `<project>-map.html`, and `ops.json`, which the owner's tooling rewrites with every run. What is left can be committed: `architecture.json`, `plan.json`, `names.json`, `targets.json`, `layers.json`, `custom-flows.json`, `descriptions/`, `MAP.md` and the `.gitignore` itself. Floorplan only reads and writes files; it never commits anything.
 
 Any other value is an error with a "did you mean …". When git already tracks files that the folder now ignores, the build prints the `git rm --cached` command that untracks them. If a rule from outside the folder (a `.gitignore` above it, `.git/info/exclude`) ignores `MAP.md`, the build warns that the inputs can't be committed.
 

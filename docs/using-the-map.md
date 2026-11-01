@@ -81,13 +81,17 @@ Appears when the project has a `floorplan/layers.json`, which sorts its files in
 
 The Health check then adds **Publishability**: identifiers and folders of this installation and contact details in system code, names from your private word list in the system and the setup, and system code that imports your content. Each finding names the file and line, never the value; a private word shows only its first letter, and the list itself stays outside your repo. See the [format](../skills/floorplan/references/schema.md#layers).
 
+### Ops
+Appears when the project has a `floorplan/ops.json`, which your own cron, pipeline or deploy script writes (Floorplan never does): a status per part, file, endpoint or target, the deployed version, the last run, the last good run, the last error, a note and a few numbers. Switched on, every box with an entry gets a dot: green for **running**, amber for a **warning**, red for **down**, grey for **unknown**; a part shows the worst status of everything inside it, so you can follow a red dot down from the top level. Hovering shows the details, and the **Operations** panel lists every entry worst first (click one to go to its box), with the time the data was written, what wrote it, and a **Stale** warning when that was more than a day ago. On a map served by `serve.mjs` the data is fetched again every minute; a copy opened from its file or exported shows what the build saw. See the [format](../skills/floorplan/references/schema.md#operations).
+
 ### Export
 Saves a copy of the map to send to anyone, such as a teammate, a client, or someone without Claude or Codex. It's one HTML file that opens in any browser with nothing to install. The copy has the whole map, search, screens, the tour and flows, but no Ask bar, no **Fix with Claude** or **Build this** requests, no editor links, and nothing about your computer, like its folder path. An **Exported** label beside the title shows the date, and a small **Made with Floorplan** link at the bottom leads here.
 
 You choose what goes in:
 - **Flows and the tour**, and **notes pinned to files**, on by default;
 - **Recent work**, off by default;
-- **Health check** (or the **design review** on a blueprint), off by default. Health lists the endpoints anyone can use and where secrets sit in the code (never their values), so only include it for people you trust.
+- **Health check** (or the **design review** on a blueprint), off by default. Health lists the endpoints anyone can use and where secrets sit in the code (never their values), so only include it for people you trust;
+- **Operations**, off by default: what your tooling reported when the map was built, last errors included.
 
 Every copy shows how the app fits together (each part, file and endpoint, with names and descriptions), but not your source code. Export needs the map's server; on a map opened straight from its file, the button shows the command to run instead. You can also ask Claude or Codex to "export the floorplan".
 

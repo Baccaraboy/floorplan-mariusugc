@@ -595,6 +595,72 @@ if (layers) for (const f of included) {
 }
 const layerOfPart = (id) => (layerCounts.has(id) ? { layer: majority(layerCounts.get(id)), layers: layerCounts.get(id) } : {});
 
+// ---------- operations (floorplan/ops.json): what the owner's tooling reports about the running system ----------
+// A status, version and last runs per part, file, endpoint or target, written by the owner's own scripts (a cron, a
+// pipeline), never by the build or the AI, which know nothing about what runs. Like recent work it's an overlay: a ref
+// that isn't on the map is left out with a warning, a bad field is a warning, and a file older than a day is reported,
+// so a machine-written file never breaks a build. The map shows it under an Ops switch (ui/27-ops.js).
+const OPS_STATUSES = ['ok', 'warn', 'down', 'unknown'];
+const OPS_STALE_MS = 24 * 60 * 60 * 1000;
+let outOps = null;
+const opsFile = path.join(outDir, 'ops.json');
+if (fs.existsSync(opsFile)) {
+  let raw = null;
+  try { raw = JSON.parse(fs.readFileSync(opsFile, 'utf8')); } catch (e) { warn(`ops.json is not valid JSON: ${e.message}`); }
+  if (raw !== null && (typeof raw !== 'object' || Array.isArray(raw))) { warn('ops.json must be an object: { "asOf": "…", "items": [ … ] }'); raw = null; }
+  if (raw) {
+    // when the file was written: required, and the file's own modification time when it's missing or unreadable
+    let asOf = isStr(raw.asOf) && !Number.isNaN(Date.parse(raw.asOf)) ? raw.asOf : null;
+    if (!asOf) { warn(`ops.json ${isStr(raw.asOf) ? `"asOf" "${raw.asOf}" is not a date (ISO 8601, like 2026-11-01T04:00:00+01:00)` : 'needs "asOf", the time it was written (ISO 8601)'}; using the file's modification time`); asOf = fs.statSync(opsFile).mtime.toISOString(); }
+    const stale = Date.now() - Date.parse(asOf) > OPS_STALE_MS;
+    if (stale) warn(`ops.json is stale: as of ${asOf}, more than 24 hours ago. Check that the script that writes it still runs.`);
+    const routeIdx = new Map(routesIn.map((r, i) => [routeKey(r), i]));
+    const targetBox = new Map(outTargets.map((x) => [x.id, x.node]));
+    const resolveOps = (ref) => {
+      if (!isStr(ref)) return null;
+      const s = ref.trim().replace(/^\.\//, '').replace(/^(route:|file:)/, '');
+      if (/^n:/.test(s)) return byId.has(s.slice(2)) ? s : null;
+      if (/^f:/.test(s)) return includedSet.has(s.slice(2)) ? s : null;
+      if (byId.has(s)) return 'n:' + s;
+      if (includedSet.has(s)) return 'f:' + s;
+      const m = /^([A-Za-z]+)\s+(\/\S*)$/.exec(s);
+      if (m && routeIdx.has(`${m[1].toUpperCase()} ${m[2]}`)) return `r:${routeIdx.get(`${m[1].toUpperCase()} ${m[2]}`)}`;
+      return targetBox.get(s) || null; // a target's box; a target without one has nothing to mark
+    };
+    const items = [], missing = [], bad = [];
+    const oneLine = (v) => String(v).split('\n')[0].trim().slice(0, 300);
+    if (!Array.isArray(raw.items)) warn('ops.json needs an "items" list');
+    else raw.items.forEach((it, i) => {
+      const where = `ops.json items[${i}]`;
+      if (!it || typeof it !== 'object' || Array.isArray(it)) return bad.push(`${where} must be an object with a "ref"`);
+      const id = resolveOps(it.ref);
+      if (!id) return missing.push(it.ref === undefined ? `${where} (no ref)` : String(it.ref));
+      if (it.status !== undefined && !OPS_STATUSES.includes(it.status)) bad.push(`${where}.status "${it.status}" is not one of ${OPS_STATUSES.join(', ')}; shown as unknown`);
+      const out = { id, ref: it.ref.trim(), status: OPS_STATUSES.includes(it.status) ? it.status : 'unknown' };
+      for (const k of ['version', 'lastRun', 'lastOk', 'lastError', 'note']) {
+        if (it[k] === undefined || it[k] === null || it[k] === '') continue;
+        if (typeof it[k] !== 'string' && typeof it[k] !== 'number') { bad.push(`${where}.${k} must be text`); continue; }
+        if (/^last(Run|Ok)$/.test(k) && Number.isNaN(Date.parse(String(it[k])))) bad.push(`${where}.${k} "${oneLine(it[k])}" is not a date (ISO 8601)`);
+        if (oneLine(it[k])) out[k] = oneLine(it[k]);
+      }
+      if (it.metrics !== undefined) {
+        if (!it.metrics || typeof it.metrics !== 'object' || Array.isArray(it.metrics)) bad.push(`${where}.metrics must be an object of label → number or short text`);
+        else {
+          const metrics = {};
+          for (const [k, v] of Object.entries(it.metrics).slice(0, 12)) if (typeof v === 'number' || typeof v === 'boolean' || typeof v === 'string') metrics[oneLine(k).slice(0, 40)] = typeof v === 'string' ? oneLine(v).slice(0, 80) : v;
+          if (Object.keys(metrics).length) out.metrics = metrics;
+        }
+      }
+      items.push(out);
+    });
+    if (missing.length) warn(`ops.json: ${missing.length} ref(s) aren't on the map and were left out (use a node id, a file path, "METHOD /path" or a target id with a box): ${missing.slice(0, 5).join(', ')}${missing.length > 5 ? '…' : ''}`);
+    for (const b of bad.slice(0, 10)) warn(b);
+    if (bad.length > 10) warn(`ops.json: ${bad.length - 10} more field(s) with problems`);
+    const counts = Object.fromEntries(OPS_STATUSES.map((s) => [s, items.filter((x) => x.status === s).length]));
+    outOps = { asOf, source: isStr(raw.source) ? oneLine(raw.source) : null, stale, counts, items };
+  }
+}
+
 // ---------- report ----------
 const pct = included.length ? (unassigned.length / included.length) * 100 : 0;
 const report = [];
@@ -687,6 +753,8 @@ const graph = {
     default: layers.def, mixed: [...layerCounts.values()].filter((c) => majority(c) === 'mixed').length,
   } } : {}),
   ...(outRecent?.items.length ? { recent: outRecent } : {}),
+  // what the owner's tooling reports about the running system (never in MAP.md: it changes with every run)
+  ...(outOps?.items.length ? { ops: outOps } : {}),
 };
 // extension hooks, computed from the finished graph plus the raw scan
 // a blueprint has no code to check, so its Health is a design review of the plan (computed after screens)
@@ -777,6 +845,10 @@ if (lang !== 'en') report.push(`LANGUAGE  ${words['lang.name']} (${lang}): the m
 report.push(graph.recent
   ? `RECENT WORK  ${graph.recent.items.length} card(s) highlighted across ${graph.recent.tasks.length} task(s)`
   : `RECENT WORK  none highlighted${fs.existsSync(recentFile) ? '' : ' (no recent-work.json)'}`);
+if (graph.ops) {
+  const o = graph.ops;
+  report.push(`OPS  ${o.stale ? `stale: as of ${o.asOf} (more than 24 hours ago) · ` : ''}${o.items.length} item${o.items.length === 1 ? '' : 's'}: ${OPS_STATUSES.map((s) => `${o.counts[s]} ${s}`).join(' · ')}${o.stale ? '' : ` (as of ${o.asOf})`}`);
+} else report.push(`OPS  none${fs.existsSync(opsFile) ? ' (nothing in ops.json is on the map)' : ' (no ops.json)'}`);
 report.push(`MAP.MD  ${mapNote}`);
 // point future Claude Code sessions in this project at the map. Codex has no personal, uncommitted
 // equivalent (AGENTS.md is shared with the team), so a map built by Codex leaves the project's notes alone.

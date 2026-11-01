@@ -103,9 +103,10 @@ export const LEGACY_MAP_DIR = 'show-code';
 export const isMapDir = (d) => ['architecture.json', 'plan.json', 'graph.json', '.cache'].some((f) => fs.existsSync(path.join(d, f)));
 /** Where the map's own files may go in git: "none" keeps the whole folder out of it (the default), "inputs" only what a build writes again. */
 export const GIT_MODES = ['none', 'inputs'];
-/** What a build writes again each time, so it can always be made from the rest: ignored with "git": "inputs". An export is <project>-map.html. */
-const REGENERATED = ['.cache/', 'index.html', 'graph.json', 'artifact.html', 'query.mjs', 'serve.mjs', 'recent-work.json', '*-map.html'];
-const isRegenerated = (f) => f.startsWith('.cache/') || /^(index\.html|graph\.json|artifact\.html|query\.mjs|serve\.mjs|recent-work\.json|[^/]*-map\.html)$/.test(f);
+/** What a build writes again each time, so it can always be made from the rest: ignored with "git": "inputs". An export is <project>-map.html.
+ *  ops.json is the owner's tooling's, not the build's, but it changes with every run, so it stays out too. */
+const REGENERATED = ['.cache/', 'index.html', 'graph.json', 'artifact.html', 'query.mjs', 'serve.mjs', 'recent-work.json', 'ops.json', '*-map.html'];
+const isRegenerated = (f) => f.startsWith('.cache/') || /^(index\.html|graph\.json|artifact\.html|query\.mjs|serve\.mjs|recent-work\.json|ops\.json|[^/]*-map\.html)$/.test(f);
 /** The git mode a map folder asks for ("git" in its architecture.json): "none" unless it says "inputs". Build reports a wrong value. */
 export function gitModeOf(dir) {
   try {

@@ -74,6 +74,10 @@ The map lays itself out in your browser with [ELK](https://eclipse.dev/elk/), so
 
 After every make or update, the AI records what was just worked on in `recent-work.json`. `recent.mjs` lists the facts: what changed since the last map, uncommitted changes, and recent commits, each matched to its card. The AI adds the *why*: what you asked for, and how each change serves it. The previous highlights are replaced every time.
 
+## Operations
+
+The map shows what the code *is*; what *runs* only the owner's own tooling knows. If a cron job, a deploy pipeline or a script writes `floorplan/ops.json` (a status per part, file, endpoint or target, the deployed version, the last run, the last good run, the last error, a note, a few numbers, and when the file was written), the build checks it like recent work, warns about refs that aren't on the map or a file older than a day, and puts it in `graph.ops`. An **Ops** switch on the map gives every box with an entry a status dot, with the details on hover and in an **Operations** panel that lists everything worst first. While the map is served, the page fetches the file again every minute, so the tooling can rewrite it between builds. Floorplan and the AI never write this file, and `MAP.md` never mentions it, since it changes with every run ([format](../skills/floorplan/references/schema.md#operations)).
+
 ## 6. Showing it
 
 `open.mjs` starts the map's small local server in the background and opens your browser. If the server is already running for this map, it's reused, and any open tab reloads itself in place instead of a new one opening.

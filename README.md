@@ -124,6 +124,8 @@ The map speaks English by default and **German** on request: ask for "the floorp
 
 **Layers:** sort your files in `floorplan/layers.json` into the system you could publish one day, the setup of this one installation and your own content, and a **Layers** switch colours the map by them, so you see where they're mixed. Health then adds a **Publishability** group: ids, folders and contact details of this installation in the system code, names from a private word list you keep outside the repo (shown only by their first letter), and system code that can't run without your content ([format](skills/floorplan/references/schema.md#layers)).
 
+**What's running:** let your own cron, pipeline or deploy script write `floorplan/ops.json` (a status per part, the deployed version, the last run, the last error), and an **Ops** switch puts a status dot on every box, worst status first on the parts, with the details on hover and in an **Operations** panel; a served map fetches the file again every minute. Floorplan never writes this file itself ([format](skills/floorplan/references/schema.md#operations)).
+
 **For AI workers:** every build also writes `floorplan/MAP.md`, the map as plain text (the parts with their key files and endpoints, who writes where, the flows, the Health findings and the recent work, in at most 1,500 lines). With `"git": "inputs"` in `architecture.json`, a project can commit it with the map's inputs, so a fresh clone or a worker with no memory of earlier sessions starts from the map instead of searching the code ([format](skills/floorplan/references/schema.md#git)).
 
 ### Also: blueprints, for apps you haven't built yet
