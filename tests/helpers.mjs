@@ -4,7 +4,8 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
-import { fileURLToPath } from 'node:url';
+import { createRequire } from 'node:module';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 
 export const REPO = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 export const SKILL = path.join(REPO, 'skills', 'floorplan');
@@ -57,6 +58,28 @@ export function openEndpoints(graph) {
     .flatMap((i) => i.items.filter((id) => id.startsWith('r:')).map((id) => graph.routes[+id.slice(2)]))
     .map((r) => `${r.m} ${r.p}`)
     .sort();
+}
+
+/**
+ * A headless Chromium through Playwright, for the few tests that open a built map in a real browser, or null when
+ * Playwright or its browser isn't there (the test then skips; nothing is ever installed). Playwright is looked up the
+ * way require does, NODE_PATH included; FLOORPLAN_TEST_CHROMIUM names another Chromium to run instead of Playwright's.
+ */
+export async function launchBrowser() {
+  let pw;
+  try { pw = createRequire(import.meta.url)('playwright'); } catch { return null; }
+  try { return await pw.chromium.launch({ executablePath: process.env.FLOORPLAN_TEST_CHROMIUM || undefined }); } catch { return null; }
+}
+
+/** Opens a project's built map in a new page and waits for its first layout. Returns the page and every error it logged. */
+export async function openMap(browser, root) {
+  const page = await browser.newPage({ viewport: { width: 1400, height: 900 } });
+  const errors = [];
+  page.on('console', (m) => { if (m.type() === 'error') errors.push(m.text()); });
+  page.on('pageerror', (e) => errors.push(String(e.message || e)));
+  await page.goto(pathToFileURL(path.join(root, 'floorplan', 'index.html')).href);
+  await page.waitForFunction(() => !!window.Floorplan?.state.layout || !document.querySelector('#empty').hidden, null, { timeout: 20000 });
+  return { page, errors };
 }
 
 // A fake password for the sample app. It's assembled at runtime so no secret-looking string is

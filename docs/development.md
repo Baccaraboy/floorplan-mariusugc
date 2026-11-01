@@ -75,6 +75,8 @@ npm test
 
 The tests use Node's built-in test runner, so there's nothing to install (`npm test` is the same as `node --test`). GitHub runs them on every push and pull request on Linux and Windows with Node 18, 20 and 22, and on macOS weekly and on demand (Actions → macOS → Run workflow), since its macOS machines are often all busy.
 
+A few tests open the built map in a real browser. They use [Playwright](https://playwright.dev) if it can be found the way `require` finds it (a global install with `NODE_PATH` set counts), with its own Chromium or the one `FLOORPLAN_TEST_CHROMIUM` points at, and skip otherwise; nothing is installed for them.
+
 | File | What it checks |
 |---|---|
 | `parsing.test.mjs` | imports, endpoints, web requests and doc comments, per language and framework |
@@ -90,6 +92,7 @@ The tests use Node's built-in test runner, so there's nothing to install (`npm t
 | `layers.test.mjs` | layers from `layers.json`: files by the first matching pattern in the list's order, parts by majority or mixed, each Publishability check with what it finds and what it leaves alone, the private words masked and never written, a missing word list as a note, mistakes as errors, the Layers switch and the Health group run against a stand-in map, the export, and nothing changes without the file |
 | `ops.test.mjs` | operations from `ops.json`, written by the owner's tooling: `graph.ops` with its items and counts, a ref that isn't on the map left out with a warning, a bad field as a warning, a missing `asOf` and a stale file, a target id resolved to the target's box, nothing in `MAP.md`, the folder's `.gitignore` in inputs mode, the export, `serve.mjs` handing the file out, the Ops switch, hover lines and panel run against a stand-in map in English and German, and nothing changes without the file |
 | `large-files.test.mjs` | files over the scan's size limit stay on the map with their line count, and the scan, Health and the map say they weren't read |
+| `external-edges.test.mjs` | an edge between two external nodes: kept with a warning and `drawn: false`, no field and no warning without one, and (in a real browser through Playwright, when it's installed; skipped otherwise) the board lays out without an error, draws the other connections and lists the edge in both nodes' details |
 | `sample-app.test.mjs` | a whole map of a two-repo shop: endpoints, cross-repo requests, Health, offline map, no secret values written, updates |
 | `serve.test.mjs` | the map's server: 127.0.0.1 only, its own host names only, token and same-origin checks, nothing served from outside its folder |
 | `export.test.mjs` | exporting a copy to share: what's left out by default, the extras when asked, the Export button's endpoint |

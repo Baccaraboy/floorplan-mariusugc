@@ -86,6 +86,8 @@ Good candidates:
 - Firebase background functions (schedules, Firestore/Storage/Pub/Sub triggers, from the scan's FIREBASE FUNCTIONS list) → a `worker` node; link the collection or topic that triggers them (`event`)
 - calls through env-configured base URLs that the matcher missed (`http`)
 
+An edge between two external nodes (a database that notifies a mail service, a sign-in provider that calls a hosting platform) is kept and listed in both nodes' details, but not drawn: every external node sits in the last column of the layout, which allows no line between two of them. The build warns `edges[i]: both ends are external nodes; shown in the panels, not drawn on the board` and marks the link `drawn: false` in graph.json.
+
 ## annotations
 
 `{ "path": "<file>", "note": "…", "tags": ["hotspot"] }` pins a note to a file. The file's chip gets an accent outline. Use these sparingly, for god-files, tricky invariants, or deprecated code still in use.
