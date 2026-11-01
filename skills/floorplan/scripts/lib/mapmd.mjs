@@ -10,7 +10,7 @@
 // (map.* and a few keys the viewer shares), never from this file. The file is meant to be committed (with "git":
 // "inputs"), so it holds nothing that changes with every edit: no lines of code, and a stamp (the day and commit it was
 // written) that build.mjs leaves as it was when nothing else changed.
-import { fill } from './lang.mjs';
+import { translator } from './lang.mjs';
 
 export const MAX_LINES = 1500;
 
@@ -65,10 +65,7 @@ export function withoutStamp(text) {
  */
 export function buildMapMd(graph, { words, dir = 'floorplan', inputs = [], maxLines = MAX_LINES } = {}) {
   const lang = graph.meta?.lang || 'en';
-  const t = (key, vars) => fill(words[key] ?? key, vars);
-  let plural;
-  try { plural = new Intl.PluralRules(lang); } catch { plural = new Intl.PluralRules('en'); }
-  const tn = (key, n, vars) => { const k = `${key}.${plural.select(n)}`; return t(k in words ? k : `${key}.other`, { n, ...vars }); };
+  const { t, tn } = translator(words, lang);
   const more = (n) => t('map.more', { n });
   const bp = !!graph.meta?.blueprint;
   const nodes = graph.nodes || [], files = graph.files || [], routes = graph.routes || [], links = graph.links || [], targets = graph.targets || [], rules = graph.rules || [], schedules = graph.schedules || [];
@@ -223,11 +220,13 @@ export function buildMapMd(graph, { words, dir = 'floorplan', inputs = [], maxLi
   const issues = [...(graph.health?.issues || [])].sort((a, b) => SEVERITIES.findIndex(([s]) => s === a.severity) - SEVERITIES.findIndex(([s]) => s === b.severity));
   const sums = graph.health?.summary || Object.fromEntries(SEVERITIES.map(([s]) => [s, issues.filter((i) => i.severity === s).length]));
   const healthSum = `${bp ? t('health.review') : t('health.title')}: ${SEVERITIES.map(([s, word]) => t('health.sevCount', { n: sums[s] || 0, word })).join(' · ')}`;
+  // some titles already end in "(3 places)", in the table's own words for a count of places: say it once
+  const placeForms = Object.keys(words).filter((k) => k.startsWith('count.place.')).map((k) => String(words[k]).replace(/[.*+?^${}()|[\]\\]/g, '\\$&').replace(/\\\{n\\\}/g, '\\d+'));
+  const placesSuffix = new RegExp(` \\((?:${placeForms.join('|')})\\)$`);
   const findingLine = (i) => {
     const places = i.locations?.length || i.items?.length || 0;
     const word = SEVERITIES.find(([s]) => s === i.severity)?.[1] ?? oneLine(i.severity);
-    // some titles already end in "(3 places)": say it once
-    return `- [${word}] ${oneLine(i.title).replace(/ \(\d+ places?\)$/, '')}${places ? ` (${tn('count.place', places)})` : ''}`;
+    return `- [${word}] ${oneLine(i.title).replace(placesSuffix, '')}${places ? ` (${tn('count.place', places)})` : ''}`;
   };
   const recent = graph.recent;
   const recentChange = (it) => withText(`${it.change === 'new' ? t('recent.new') : t('recent.changed')}: ${refText(it.id)}`, clip(oneLine(it.note), 200));
