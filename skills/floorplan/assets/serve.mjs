@@ -54,6 +54,7 @@ function exportMap(include, extraFlows = []) {
     tour: on.includes('flows') ? g.tour : [],
     files: on.includes('notes') ? g.files : g.files.map(({ note, ...f }) => f),
   };
+  if (!on.includes('flows')) delete out.outcomes; // what you see comes from the flows
   if (!on.includes('recent')) delete out.recent;
   if (!on.includes('health')) delete out.health;
   // what the owner's tooling reported when the map was built (floorplan/ops.json): a snapshot, and its last errors are theirs

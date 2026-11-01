@@ -233,13 +233,49 @@ archEdges.forEach((e, i) => {
 });
 
 // ---------- flows + annotations ----------
+// A flow may also say what starts it (`trigger`: a click, a clock, a message, a webhook, a file, a hand), what the
+// owner sees at a step (`you_see`) and what they have in the end (`outcome`), each at a place on the map (`where`:
+// a part or a file, usually an outside service like a phone, a calendar, a database or a mailbox). The refs are
+// checked like the steps; a trigger that names a schedule is checked against the Clock once the schedules are known,
+// and gets its words. graph.outcomes then turns it round: per place, what arrives there and from which flow. A flow
+// without these fields comes out exactly as before.
+export const TRIGGER_KINDS = ['click', 'schedule', 'message', 'webhook', 'file', 'manual', 'other'];
+const TRIGGER_FIELDS = ['kind', 'text', 'node', 'schedule'];
+const SEEN_FIELDS = ['where', 'text', 'example'];
 const outFlows = [];
+const scheduleTriggers = []; // the triggers that name a schedule, with where they are, for the check below
+// what a person sees at a place: { where, text, example? }, with the place resolved to its card
+const resolveSeen = (v, where) => {
+  if (!v || typeof v !== 'object' || Array.isArray(v)) { err(`${where} must be { "where": "<node id or file path>", "text": "…" }`); return null; }
+  for (const k of Object.keys(v)) if (!SEEN_FIELDS.includes(k)) err(`${where}: unknown field "${k}"${didYouMean(k, SEEN_FIELDS)}`);
+  const ref = resolveEndpoint(v.where, `${where}.where`);
+  if (!isStr(v.text)) err(`${where}.text is required: one sentence on what you see there`);
+  if (v.example !== undefined && !isStr(v.example)) err(`${where}.example must be text: one short line, never a secret`);
+  if (!ref || !isStr(v.text)) return null;
+  return { where: ref, text: v.text.trim(), ...(isStr(v.example) ? { example: v.example.trim() } : {}) };
+};
+const resolveFlowTrigger = (tr, where) => {
+  if (!tr || typeof tr !== 'object' || Array.isArray(tr)) { err(`${where} must be { "kind": "click", "text": "…" } (kinds: ${TRIGGER_KINDS.join(', ')})`); return null; }
+  for (const k of Object.keys(tr)) if (!TRIGGER_FIELDS.includes(k)) err(`${where}: unknown field "${k}"${didYouMean(k, TRIGGER_FIELDS)}`);
+  if (!TRIGGER_KINDS.includes(tr.kind)) err(`${where}.kind "${tr.kind}" must be one of ${TRIGGER_KINDS.join(', ')}${didYouMean(String(tr.kind), TRIGGER_KINDS)}`);
+  if (!isStr(tr.text)) err(`${where}.text is required: what starts the flow, in plain words`);
+  const node = tr.node !== undefined ? resolveEndpoint(tr.node, `${where}.node`) : null;
+  if (tr.schedule !== undefined && !isStr(tr.schedule)) err(`${where}.schedule must be the id of a schedule (one the scan found, or one in schedules.json)`);
+  const out = { kind: tr.kind, text: isStr(tr.text) ? tr.text.trim() : '', ...(node ? { node } : {}), ...(isStr(tr.schedule) ? { schedule: tr.schedule.trim() } : {}) };
+  if (out.schedule) scheduleTriggers.push([out, `${where}.schedule`]); // checked whatever else is wrong, so one build names every problem
+  return TRIGGER_KINDS.includes(tr.kind) && isStr(tr.text) ? out : null;
+};
 flows.forEach((fl, i) => {
   const where = `flows[${i}]`;
   if (!isStr(fl?.id) || !isStr(fl?.title)) err(`${where} needs id and title`);
   if (!Array.isArray(fl?.steps) || fl.steps.length < 2) { err(`${where}.steps needs at least 2 steps`); return; }
-  const steps = fl.steps.map((s, j) => ({ ref: resolveEndpoint(s?.node, `${where}.steps[${j}].node`), note: s?.note || '' }));
-  outFlows.push({ id: fl.id, title: fl.title, description: fl.description || '', steps });
+  const steps = fl.steps.map((s, j) => {
+    const seen = s?.you_see !== undefined ? resolveSeen(s.you_see, `${where}.steps[${j}].you_see`) : null;
+    return { ref: resolveEndpoint(s?.node, `${where}.steps[${j}].node`), note: s?.note || '', ...(seen ? { you_see: seen } : {}) };
+  });
+  const trigger = fl.trigger !== undefined ? resolveFlowTrigger(fl.trigger, `${where}.trigger`) : null;
+  const outcome = fl.outcome !== undefined ? resolveSeen(fl.outcome, `${where}.outcome`) : null;
+  outFlows.push({ id: fl.id, title: fl.title, description: fl.description || '', ...(trigger ? { trigger } : {}), steps, ...(outcome ? { outcome } : {}) });
 });
 // Flows people requested from the map (saved by serve.mjs). Steps use stable refs —
 // "route:METHOD /path" and "sym:<file>#<name>" — so they survive rebuilds; stale steps are dropped.
@@ -722,6 +758,24 @@ const outSchedules = [];
   }
 }
 
+// ---------- what you see: a flow's trigger on the Clock, and the outcomes by place ----------
+// A flow trigger that names a schedule takes the plan's words (and its time zone and cron), so the flow can say
+// "daily at 02:30" without repeating it. Then the index: for every place a flow names in `you_see` or `outcome`, the
+// sentences that arrive there, each with its flow and step (no step: the flow's outcome), in the order the flows say.
+for (const [tr, where] of scheduleTriggers) {
+  const s = outSchedules.find((x) => x.id === tr.schedule);
+  if (!s) { err(`${where} "${tr.schedule}" is not a schedule the scan found or schedules.json lists${didYouMean(tr.schedule, outSchedules.map((x) => x.id))}`); continue; }
+  tr.when = s.human;
+  if (s.tz) tr.tz = s.tz;
+  if (s.cron) tr.cron = s.cron;
+}
+const outOutcomes = {};
+const arrives = (seen, entry) => { (outOutcomes[seen.where] ||= []).push({ ...entry, text: seen.text, ...(seen.example ? { example: seen.example } : {}) }); };
+for (const fl of outFlows) {
+  fl.steps.forEach((s, j) => { if (s.you_see) arrives(s.you_see, { flow: fl.id, step: j }); });
+  if (fl.outcome) arrives(fl.outcome, { flow: fl.id });
+}
+
 // ---------- layers (floorplan/layers.json): system, setup and content ----------
 // Which files are the system the owner could one day publish, which are the setup of this one installation (key
 // names, ids, paths, calendars) and which are the owner's content (customers, amounts, mails). Each file takes the
@@ -944,6 +998,8 @@ const graph = {
   }),
   links: [...links.values()],
   flows: outFlows,
+  // what you see, by place: the sentences the flows' you_see and outcome put there, each with its flow and step
+  ...(Object.keys(outOutcomes).length ? { outcomes: outOutcomes } : {}),
   tour: outTour,
   ...(outTargets.length ? { targets: outTargets } : {}),
   // the project's rules and decisions, each resolved to the cards it applies to (a target as "t:<id>")
@@ -1032,6 +1088,10 @@ if (hs && (hs.high || hs.medium || hs.low)) {
   for (const i of graph.health.issues.filter((x) => x.severity !== 'low' && x.group !== 'publish').slice(0, 8)) report.push(`  [${i.severity}] ${i.title}`);
 }
 if (graph.screens?.length) report.push(`SCREENS  ${graph.screens.length} detected`);
+if (outFlows.length) {
+  const places = Object.keys(outOutcomes).length;
+  report.push(`FLOWS  ${outFlows.length} · with trigger ${outFlows.filter((f) => f.trigger).length} · with outcome ${outFlows.filter((f) => f.outcome).length} · outcomes at ${places} place${places === 1 ? '' : 's'}`);
+}
 const nConflicts = outTargets.filter((t) => t.conflict).length;
 if (outTargets.length) report.push(`TARGETS  ${outTargets.length}${nConflicts ? ` (${nConflicts} with more than one writer)` : ''}`);
 if (graph.rules) {

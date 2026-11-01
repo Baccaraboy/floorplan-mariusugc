@@ -183,7 +183,7 @@ test('a retired rule on a target is marked on the target\'s box', () => {
 test('MAP.md has a Rules section with its marker after Targets: per rule its kind, dates, places, text and source', () => {
   const md = mapOf(root);
   const markers = md.split('\n').filter((l) => /^<!-- floorplan:\w+ -->$/.test(l));
-  assert.deepEqual(markers, ['parts', 'targets', 'rules', 'schedules', 'flows', 'health', 'recent'].map((s) => `<!-- floorplan:${s} -->`));
+  assert.deepEqual(markers, ['parts', 'targets', 'rules', 'schedules', 'flows', 'outcomes', 'health', 'recent'].map((s) => `<!-- floorplan:${s} -->`));
   const sec = rulesSection(md);
   assert.match(sec, /^<!-- floorplan:rules -->\n## Rules\n/);
   const lines = sec.split('\n');

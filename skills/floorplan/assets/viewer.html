@@ -262,6 +262,9 @@ svg.dim .edge:not(.hl) { opacity: .1; }
 #flowmenu .r:hover .del { opacity: 1; }
 #flowmenu .r .del:hover { background: rgba(var(--ink), .1); color: var(--text); }
 #flowmenu .yours { font-size: 11px; color: var(--text-3); background: rgba(var(--ink), .06); border-radius: 999px; padding: 1px 7px; margin-left: 6px; font-weight: 400; }
+/* what starts a flow, under its title: a play mark, or a clock with the schedule's words */
+#flowmenu .fg-start { display: flex; gap: 6px; align-items: flex-start; margin-top: 4px; }
+#flowmenu .fg-start svg.i { width: 14px; height: 14px; margin-top: 2px; color: var(--text-3); }
 #flowmenu .new { display: flex; align-items: center; gap: 10px; color: var(--text); }
 #flowmenu .new svg { color: var(--text-3); }
 .ff { padding: 8px 6px 6px; }
@@ -302,6 +305,14 @@ svg.dim .edge:not(.hl) { opacity: .1; }
 #flowbar .dots { display: flex; gap: 4px; margin-top: 8px; }
 #flowbar .dots i { width: 18px; height: 3px; border-radius: 2px; background: rgba(var(--ink), .12); transition: background .3s var(--ease); }
 #flowbar .dots i.on { background: var(--on); }
+/* the cards of a flow: what starts it (first step), what you see at this step, what you have in the end (last step) */
+#flowbar .fg { display: flex; gap: 8px; align-items: flex-start; padding: 8px 10px; border-radius: 12px; background: rgba(var(--ink), .05); font-size: 12.5px; line-height: 1.45; animation: sheetIn .3s var(--ease); }
+#flowbar .fg.fg-start { margin-bottom: 8px; }
+#flowbar .fg.fg-see, #flowbar .fg.fg-end { margin-top: 8px; }
+#flowbar .fg.fg-see { background: color-mix(in srgb, var(--k-data) 12%, transparent); }
+#flowbar .fg.fg-end { background: color-mix(in srgb, var(--k-event) 12%, transparent); }
+#flowbar .fg svg.i { width: 15px; height: 15px; margin-top: 2px; }
+#flowbar .fg .ex { display: block; font-style: normal; color: var(--text-3); margin-top: 2px; }
 #tooltip { position: absolute; pointer-events: none; padding: 11px 13px; max-width: 320px; z-index: 6; font-size: 12.5px; line-height: 1.5; border-radius: 16px; animation: tipIn .2s var(--ease); }
 @keyframes tipIn { from { opacity: 0; transform: translateY(3px); } }
 #tooltip[hidden] { display: none; }
@@ -701,6 +712,15 @@ const P = {
   x: '<path d="M18 6 6 18M6 6l12 12"/>',
   left: '<path d="m15 18-6-6 6-6"/>',
   right: '<path d="m9 18 6-6-6-6"/>',
+  // what starts a flow (a click, a clock, a message, a webhook is the bolt above, a file is the file above, a hand,
+  // anything else), what you see at a step, and what you have in the end
+  pointer: '<path d="m5 3 15 7.5-6.5 2L11 19z"/>',
+  clock: '<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3.5 2"/>',
+  bubble: '<path d="M4 5h16v11h-9l-4 3v-3H4z"/>',
+  hand: '<path d="M8 12V6a1.5 1.5 0 0 1 3 0v6M11 11V4a1.5 1.5 0 0 1 3 0v7M14 11V5a1.5 1.5 0 0 1 3 0v8.5a6 6 0 0 1-6 6h-1a6 6 0 0 1-5-3L3 12.5a1.5 1.5 0 0 1 2.6-1.5L8 13"/>',
+  play: '<path d="M7 5v14l11-7z"/>',
+  eye: '<path d="M2 12s3.5-6.5 10-6.5S22 12 22 12s-3.5 6.5-10 6.5S2 12 2 12z"/><circle cx="12" cy="12" r="3"/>',
+  flag: '<path d="M5 21V4"/><path d="M5 4h12l-2 4 2 4H5"/>',
 };
 const icon = (k) => `<svg viewBox="0 0 24 24">${P[k] || P.file}</svg>`;
 const iconI = (k) => `<svg class="i" viewBox="0 0 24 24">${P[k] || P.file}</svg>`;
@@ -1766,10 +1786,19 @@ $('#search-btn').onclick = openPalette;
 // ======================= flows =======================
 const fm = $('#flowmenu');
 fm.addEventListener('click', (ev) => ev.stopPropagation());
+// What starts a flow, what you see at a step and what you have in the end (architecture.json: trigger, you_see, outcome).
+// The kind of trigger is an icon, with its word on hover; a trigger on the Clock carries the schedule's words; a place
+// is named as its card is.
+const TRIGGER_KIND = { click: t('outcomes.kind.click'), schedule: t('outcomes.kind.schedule'), message: t('outcomes.kind.message'), webhook: t('outcomes.kind.webhook'), file: t('outcomes.kind.file'), manual: t('outcomes.kind.manual'), other: t('outcomes.kind.other') };
+const TRIGGER_ICON = { click: 'pointer', schedule: 'clock', message: 'bubble', webhook: 'worker', file: 'file', manual: 'hand' };
+const triggerText = (tr) => `${h(tr.text)}${tr.when ? ` · ${h(tr.when)}${tr.tz ? `, ${h(t('clock.tz', { tz: tr.tz }))}` : ''}` : ''}${tr.node && Q.exists(tr.node) ? ` · ${h(info(tr.node).name)}` : ''}`;
+const triggerIcon = (tr) => `<span title="${h(TRIGGER_KIND[tr.kind] || tr.kind)}">${iconI(TRIGGER_ICON[tr.kind] || 'play')}</span>`;
+const triggerLine = (f) => (f.trigger ? `<span class="fg-start">${triggerIcon(f.trigger)}<span>${t('outcomes.startsWhen')}: ${triggerText(f.trigger)}</span></span>` : '');
+const seenCard = (cls, ic, label, v) => `<div class="fg ${cls}">${iconI(ic)}<span><b>${label}:</b> ${h(v.text)}${Q.exists(v.where) ? ` · ${h(info(v.where).name)}` : ''}${v.example ? `<i class="ex">${h(t('outcomes.example', { example: v.example }))}</i>` : ''}</span></div>`;
 function renderFlowMenu() {
   fm.innerHTML = G.flows.map((f) => f.custom && !EXPORTED
-    ? `<div class="r custom" data-flow="${h(f.id)}"><div class="rt"><b>${h(f.title)}<span class="yours">${t('flows.yours')}</span></b><span>${tn('count.step', f.steps.length)}${f.description ? ' · ' + h(f.description) : ''}</span></div><button class="del" data-del="${h(f.id)}" title="${h(t('flows.delete'))}">${iconI('x')}</button></div>`
-    : `<div class="r" data-flow="${h(f.id)}"><b>${h(f.title)}</b><span>${tn('count.step', f.steps.length)}${f.description ? ' · ' + h(f.description) : ''}</span></div>`).join('')
+    ? `<div class="r custom" data-flow="${h(f.id)}"><div class="rt"><b>${h(f.title)}<span class="yours">${t('flows.yours')}</span></b><span>${tn('count.step', f.steps.length)}${f.description ? ' · ' + h(f.description) : ''}</span>${triggerLine(f)}</div><button class="del" data-del="${h(f.id)}" title="${h(t('flows.delete'))}">${iconI('x')}</button></div>`
+    : `<div class="r" data-flow="${h(f.id)}"><b>${h(f.title)}</b><span>${tn('count.step', f.steps.length)}${f.description ? ' · ' + h(f.description) : ''}</span>${triggerLine(f)}</div>`).join('')
     + (EXPORTED ? (G.flows.length ? '' : `<div class="r" style="cursor:default"><span>${t('flows.noneInCopy')}</span></div>`) : (G.flows.length ? '<div class="mi-sep"></div>' : '')
     + `<div class="r new" data-new>${iconI('spark')}<b>${t('flows.request')}</b></div>`);
   fm.querySelectorAll('[data-flow]').forEach((r) => r.onclick = () => { fm.classList.remove('open'); startFlow(r.dataset.flow); });
@@ -1873,7 +1902,8 @@ $('#flows-btn').onclick = (ev) => { ev.stopPropagation(); legendEl.classList.rem
 $('#filters-btn').onclick = (ev) => { ev.stopPropagation(); fm.classList.remove('open'); legendEl.classList.toggle('open'); };
 legendEl.addEventListener('click', (ev) => ev.stopPropagation());
 window.addEventListener('click', () => { fm.classList.remove('open'); legendEl.classList.remove('open'); });
-function startFlow(id) { const f = G.flows.find((x) => x.id === id); if (!f) return; state.flow = { f, i: 0 }; flowStep(); }
+/** Plays a flow from its first step, or from the step `at` (the What you see panel opens a flow where a sentence arrives). */
+function startFlow(id, at = 0) { const f = G.flows.find((x) => x.id === id); if (!f) return; state.flow = { f, i: clamp(Math.floor(+at) || 0, 0, f.steps.length - 1) }; flowStep(); }
 function stopFlow() { state.flow = null; document.body.classList.remove('in-flow'); $('#flowbar').hidden = true; vp.querySelectorAll('.flowfx').forEach((x) => x.remove()); select(null); }
 function lcaContainer(a, b) {
   const cb = new Set(chain(b));
@@ -1886,7 +1916,11 @@ function flowStep() {
   const a = f.steps[i].ref, b = f.steps[i + 1]?.ref;
   const container = b ? lcaContainer(a, b) : parentOf.get(a) || 'root';
   const bar = $('#flowbar'); bar.hidden = false;
-  bar.innerHTML = `<div class="ft"><div class="fk">${t('flowbar.step', { title: h(f.title), i: i + 1, n: f.steps.length })}</div><b>${h(info(a).name)}</b>${b ? ` <span>→</span> <b>${h(info(b).name)}</b>` : ''}<br><span>${h(f.steps[i].note)}</span><div class="dots">${f.steps.map((_, k) => `<i class="${k <= i ? 'on' : ''}"></i>`).join('')}</div></div>
+  // the trigger with the first step, what you see with its step, the outcome with the last step
+  const start = i === 0 && f.trigger ? `<div class="fg fg-start">${triggerIcon(f.trigger)}<span><b>${t('outcomes.startsWhen')}:</b> ${triggerText(f.trigger)}</span></div>` : '';
+  const seen = f.steps[i].you_see ? seenCard('fg-see', 'eye', t('outcomes.youSee'), f.steps[i].you_see) : '';
+  const end = i >= f.steps.length - 1 && f.outcome ? seenCard('fg-end', 'flag', t('outcomes.inTheEnd'), f.outcome) : '';
+  bar.innerHTML = `<div class="ft">${start}<div class="fk">${t('flowbar.step', { title: h(f.title), i: i + 1, n: f.steps.length })}</div><b>${h(info(a).name)}</b>${b ? ` <span>→</span> <b>${h(info(b).name)}</b>` : ''}<br><span>${h(f.steps[i].note)}</span>${seen}${end}<div class="dots">${f.steps.map((_, k) => `<i class="${k <= i ? 'on' : ''}"></i>`).join('')}</div></div>
     <button class="btn icon" id="fl-prev" ${i === 0 ? 'disabled' : ''}>${iconI('left')}</button><button class="btn icon" id="fl-next">${iconI(i >= f.steps.length - 1 ? 'x' : 'right')}</button><button class="btn icon" id="fl-x" title="${h(t('flowbar.exit'))}">${iconI('x')}</button>`;
   $('#fl-prev').onclick = () => { state.flow.i--; flowStep(); };
   $('#fl-next').onclick = () => { if (state.flow.i >= f.steps.length - 1) stopFlow(); else { state.flow.i++; flowStep(); } };

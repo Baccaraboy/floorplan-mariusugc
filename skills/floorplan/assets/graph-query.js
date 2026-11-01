@@ -167,7 +167,12 @@ function createGraphQuery(G) {
     return {
       project: G.project.name, summary: G.project.summary || '',
       systems: G.nodes.filter((n) => !n.parent).map((n) => ({ id: 'n:' + n.id, name: n.label, kind: n.kind, description: n.summary || '', modules: (kidsOf.get(n.id) || []).map((k) => `n:${k} ${nodes.get(k).label}`) })),
-      flows: (G.flows || []).map((f) => ({ title: f.title, steps: f.steps.map((s) => `${s.ref} ${s.note}`) })),
+      // with what starts a flow and what the owner has in the end, when the flow says so
+      flows: (G.flows || []).map((f) => ({
+        title: f.title, ...(f.trigger ? { startsWhen: f.trigger.text } : {}), steps: f.steps.map((s) => `${s.ref} ${s.note}`),
+        ...(f.steps.some((s) => s.you_see) ? { youSee: f.steps.filter((s) => s.you_see).map((s) => `${s.you_see.where} ${s.you_see.text}`) } : {}),
+        ...(f.outcome ? { inTheEnd: `${f.outcome.where} ${f.outcome.text}` } : {}),
+      })),
       counts: { files: G.files.length, endpoints: routes.length },
       ...(G.recent ? { recentWork: (G.recent.tasks || []).map((t, ti) => ({ title: t.title, request: t.request, summary: t.summary, changed: G.recent.items.filter((x) => x.task === ti).map((x) => `${x.id} ${x.note}`) })) } : {}),
     };
