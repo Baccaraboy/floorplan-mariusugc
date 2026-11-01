@@ -8,7 +8,8 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { compileGlob, parseArgs, fmtNum, mapDir, keepOutOfGit, git, toPosix } from './lib/common.mjs';
+import { compileGlob, parseArgs, fmtNum, mapDir, keepOutOfGit, git, toPosix, GIT_MODES } from './lib/common.mjs';
+import { buildMapMd, withoutStamp } from './lib/mapmd.mjs';
 import { fallbackFileName, fallbackRouteName, routeKey } from './lib/names.mjs';
 import { buildHealth, TEST_FILE } from './lib/health.mjs';
 import { LAYER_IDS, layerAssigner, majority, parseWords } from './lib/layers.mjs';
@@ -76,6 +77,10 @@ const ignoreGlobs = (isStrArr(arch.ignore) ? arch.ignore : []).map(compileGlob);
 const AUDIENCES = ['everyone', 'developers'];
 if (arch.audience !== undefined && !AUDIENCES.includes(arch.audience)) err(`audience "${arch.audience}" must be one of ${AUDIENCES.join(', ')}${didYouMean(String(arch.audience), AUDIENCES)}`);
 const audience = AUDIENCES.includes(arch.audience) ? arch.audience : 'everyone';
+// where the map's own files may go in git: "none" (default) keeps the whole folder out; "inputs" keeps out only what a
+// build writes again, so the inputs and MAP.md can be committed (lib/common.mjs keepOutOfGit)
+if (arch.git !== undefined && !GIT_MODES.includes(arch.git)) err(`git "${arch.git}" must be one of ${GIT_MODES.join(', ')}${didYouMean(String(arch.git), GIT_MODES)}`);
+const gitMode = GIT_MODES.includes(arch.git) ? arch.git : 'none';
 // the language of the map's own words (buttons, panels, the glossary): --lang, else architecture.json "lang", else English
 const LANGS = languages();
 const langWanted = args.lang !== undefined ? args.lang : arch.lang;
@@ -689,7 +694,7 @@ if (!scan.blueprint) try { graph.health = buildHealth({ graph, scan, arch, root,
 try { graph.screens = buildScreens({ graph, scan, arch, root }); } catch (e) { warn(`screen detection failed: ${e.message}`); graph.screens = []; }
 if (scan.blueprint) try { graph.health = buildPlanHealth({ graph, scan }); } catch (e) { warn(`design review failed: ${e.message}`); graph.health = { issues: [] }; }
 fs.mkdirSync(outDir, { recursive: true });
-const trackedWarning = keepOutOfGit(outDir);
+const trackedWarning = keepOutOfGit(outDir, gitMode);
 fs.writeFileSync(path.join(outDir, 'graph.json'), JSON.stringify(graph, null, 0));
 
 // The page's own words, in the chosen language: {{t:key}} in viewer.html's markup is filled in here, and the
@@ -732,6 +737,20 @@ ${fs.readFileSync(path.join(SKILL_DIR, 'assets', 'query-cli.mjs'), 'utf8')}`);
 fs.copyFileSync(path.join(SKILL_DIR, 'assets', 'serve.mjs'), path.join(outDir, 'serve.mjs'));
 // a blueprint can be changed from the map: serve.mjs redraws it with this skill's plan.mjs and build.mjs
 if (scan.blueprint) { fs.mkdirSync(path.join(outDir, '.cache'), { recursive: true }); fs.writeFileSync(path.join(outDir, '.cache', 'skill.json'), JSON.stringify({ dir: SKILL_DIR })); }
+// MAP.md: the map as plain text for AI workers (lib/mapmd.mjs), in the map's language. It is written only when its text
+// changes, not when only its "as of" line would, so a rebuild that changes nothing leaves the file (and a git diff of
+// it) alone, also a day or a commit later.
+const MAP_INPUTS = ['architecture.json', 'plan.json', 'names.json', 'targets.json', 'layers.json', 'custom-flows.json'];
+const mapFile = path.join(outDir, 'MAP.md');
+let mapNote;
+try {
+  const inputs = [...MAP_INPUTS.filter((f) => fs.existsSync(path.join(outDir, f))), ...(fs.existsSync(descDir) && fs.readdirSync(descDir).some((n) => n.endsWith('.json')) ? ['descriptions/'] : [])];
+  const mapText = buildMapMd(graph, { words, dir: toPosix(path.relative(root, outDir)) || '.', inputs });
+  let state = 'written';
+  try { state = withoutStamp(fs.readFileSync(mapFile, 'utf8')) === withoutStamp(mapText) ? 'unchanged' : 'updated'; } catch {}
+  if (state !== 'unchanged') fs.writeFileSync(mapFile, mapText);
+  mapNote = `${toPosix(path.relative(root, mapFile))} ${state} (${mapText.split('\n').length - 1} lines): the map as text for AI workers`;
+} catch (e) { mapNote = `! could not write ${toPosix(path.relative(root, mapFile))}: ${e.message}`; }
 // the logo and tab icon are inlined so the map stays one self-contained file
 function dataUri(name) { return 'data:image/png;base64,' + fs.readFileSync(path.join(SKILL_DIR, 'assets', name)).toString('base64'); }
 function escapeHtml(s) { return s.replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]); }
@@ -758,12 +777,13 @@ if (lang !== 'en') report.push(`LANGUAGE  ${words['lang.name']} (${lang}): the m
 report.push(graph.recent
   ? `RECENT WORK  ${graph.recent.items.length} card(s) highlighted across ${graph.recent.tasks.length} task(s)`
   : `RECENT WORK  none highlighted${fs.existsSync(recentFile) ? '' : ' (no recent-work.json)'}`);
+report.push(`MAP.MD  ${mapNote}`);
 // point future Claude Code sessions in this project at the map. Codex has no personal, uncommitted
 // equivalent (AGENTS.md is shared with the team), so a map built by Codex leaves the project's notes alone.
 if (agent === 'codex') report.push('AGENT  Codex: questions on the map run through Codex');
 else if (scan.blueprint) report.push('BLUEPRINT  planned, not built yet: drawn from floorplan/plan.json');
-else if (!args['no-claude-md']) report.push(`CLAUDE.LOCAL.MD  ${writeClaudeMd(root, outDir, { add: !!args['claude-md'] })}`);
-report.push(trackedWarning ? `GIT  ! ${trackedWarning}` : 'GIT  floorplan/ is kept out of git (it ignores itself)');
+else if (!args['no-claude-md']) report.push(`CLAUDE.LOCAL.MD  ${writeClaudeMd(root, outDir, { add: !!args['claude-md'], git: gitMode })}`);
+report.push(trackedWarning ? `GIT  ! ${trackedWarning}` : gitMode === 'inputs' ? `GIT  "git": "inputs": ${path.basename(outDir)}/ ignores only what it generates; its inputs and MAP.md can be committed` : 'GIT  floorplan/ is kept out of git (it ignores itself)');
 report.push('');
 report.push(`✓ wrote ${path.relative(root, path.join(outDir, 'index.html'))} (${fmtNum(Math.round(html.length / 1024))} KB) and graph.json`);
 if (pct > 10) report.push(`  Unassigned is ${pct.toFixed(0)}%: add nodes or globs for the directories above (or "ignore" them) and rebuild.`);

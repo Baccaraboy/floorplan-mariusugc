@@ -69,6 +69,18 @@ They were committed before Floorplan started ignoring the folder. Untrack them, 
 git rm -r --cached floorplan
 ```
 
+If `architecture.json` has `"git": "inputs"`, git shows the inputs and `MAP.md` on purpose: they're meant to be committed. Only the files a build writes again (`index.html`, `graph.json`, `.cache/` and so on) are ignored. Set `"git": "none"` and build to put the folder out of git again.
+
+### "git": "inputs" is set, but a rule outside floorplan/ ignores it
+The folder's own `.gitignore` leaves `MAP.md` and the inputs alone, but a `.gitignore` higher up, a global ignore file or `.git/info/exclude` ignores them. Find the rule and remove or narrow it:
+
+```bash
+git check-ignore -v floorplan/MAP.md
+```
+
+### A fresh clone has `floorplan/` but no map
+That's `"git": "inputs"`: the inputs and `MAP.md` came with the clone, the map did not. Read `floorplan/MAP.md` for the structure, or run `node <skill folder>/scripts/refresh.mjs <root>` to scan the code and build the map from the inputs.
+
 ### Port 4378 is in use
 Nothing to do. The server moves to the next free port, and the URL it prints, or that Claude gives you, is the right one.
 

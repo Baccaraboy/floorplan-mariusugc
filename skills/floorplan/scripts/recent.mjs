@@ -5,7 +5,7 @@
 // usage: node recent.mjs [root] [--days 7]
 import fs from 'node:fs';
 import path from 'node:path';
-import { git, parseArgs, mapDir } from './lib/common.mjs';
+import { git, parseArgs, mapDir, toPosix } from './lib/common.mjs';
 import { languageNote } from './lib/lang.mjs';
 
 const args = parseArgs(process.argv.slice(2));
@@ -17,6 +17,11 @@ const G = JSON.parse(fs.readFileSync(graphFile, 'utf8'));
 const readJson = (f) => { try { return JSON.parse(fs.readFileSync(f, 'utf8')); } catch { return null; } };
 const changes = readJson(path.join(dir, '.cache', 'changes.json'));
 const current = readJson(path.join(dir, 'recent-work.json'));
+
+// The map's own folder isn't work on the project: with "git": "inputs" its inputs and MAP.md show up in git, and a
+// commit that only updated the map isn't recent work either.
+const mapRel = toPosix(path.relative(root, dir));
+const inMap = (p) => !!mapRel && !mapRel.startsWith('..') && (p === mapRel || p.startsWith(mapRel + '/'));
 
 const files = new Map(G.files.map((f) => [f.p, f]));
 const labels = new Map(G.nodes.map((n) => [n.id, n.label]));
@@ -55,18 +60,22 @@ const since = changes?.since || current?.updatedAt || new Date(Date.now() - (Num
 for (const r of G.meta.repos || []) {
   const abs = path.join(root, r.path);
   const prefix = r.path === '.' ? '' : r.path + '/';
-  const status = (git(abs, ['status', '--porcelain=v1', '-uall']) || '').split('\n').filter(Boolean);
+  const status = (git(abs, ['status', '--porcelain=v1', '-uall']) || '').split('\n').filter(Boolean)
+    .filter((s) => !inMap(prefix + s.slice(3).replace(/^.* -> /, '').replace(/"/g, '')));
   const log = (git(abs, ['log', `--since=${since}`, '--max-count=20', '--no-merges', '--name-only', '--date=short', '--format=@@%h %ad %s']) || '').trim();
-  if (!status.length && !log) continue;
+  const commits = log.split('@@').filter(Boolean).map((block) => {
+    const [head, ...all] = block.trim().split('\n').filter(Boolean);
+    return { head, all, paths: all.filter((p) => !inMap(prefix + p)) };
+  }).filter((c) => !c.all.length || c.paths.length);
+  if (!status.length && !commits.length) continue;
   L.push('', `REPO ${r.path === '.' ? G.meta.rootName : r.path}`);
   if (status.length) {
     L.push('  uncommitted:');
     list(status.map((s) => { const p = prefix + s.slice(3).replace(/^.* -> /, '').replace(/"/g, ''); return `  ${s.slice(0, 2).trim().padEnd(2)} ${p}  → ${card(p)}`; }));
   }
-  if (log) {
+  if (commits.length) {
     L.push(`  commits since ${since.slice(0, 10)}:`);
-    for (const block of log.split('@@').filter(Boolean)) {
-      const [head, ...paths] = block.trim().split('\n').filter(Boolean);
+    for (const { head, paths } of commits) {
       L.push(`    ${head}`);
       paths.slice(0, 8).forEach((p) => L.push(`        ${prefix + p}  → ${card(prefix + p)}`));
       if (paths.length > 8) L.push(`        … +${paths.length - 8} more files`);

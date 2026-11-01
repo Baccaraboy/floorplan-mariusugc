@@ -1,6 +1,6 @@
 # What's in your project
 
-Floorplan writes to exactly two places in your project: the `floorplan/` folder, and (in Claude Code, only if you say yes) a short section in `CLAUDE.local.md`. Neither is committed to git, and nothing else in your project is touched.
+Floorplan writes to exactly two places in your project: the `floorplan/` folder, and (in Claude Code, only if you say yes) a short section in `CLAUDE.local.md`. Neither is committed to git (unless you ask for the map's inputs to be, [below](#keeping-the-inputs-in-git)), and nothing else in your project is touched.
 
 ## The `floorplan/` folder
 
@@ -8,6 +8,7 @@ Floorplan writes to exactly two places in your project: the `floorplan/` folder,
 |---|---|---|
 | `index.html` | The map: one self-contained page | No. Rebuilt every time |
 | `graph.json` | Everything the map shows, as data | No. Rebuilt every time |
+| `MAP.md` | The map as plain text for AI workers: the parts with their key files and endpoints, who writes where, the flows, the Health findings (a title and a count each) and the recent work. In the map's language, in at most 1,500 lines | No. Rewritten when the map changes |
 | `architecture.json` | The parts of your app, outside services, extra connections, flows and the tour | **Yes** |
 | `descriptions/*.json` | The name and description of every file and endpoint, one file per part | **Yes** |
 | `names.json` | Optional: names you've fixed for parts, files and endpoints, which win over everything else and no update changes. Only there if you or the AI made it | **Yes** |
@@ -21,7 +22,7 @@ Floorplan writes to exactly two places in your project: the `floorplan/` folder,
 | `artifact.html` | A copy for opening in the Claude app, only if you asked for one | No |
 | `<project>-map.html` | An exported copy to share, only if you exported one from Claude or Codex (the map's Export button downloads it instead) | No |
 | `.cache/` | The scan, the description worksheets, the last update's changes, the running server's address, and, for a blueprint, the last 20 versions of the plan that **Undo** goes back to | No. Safe to delete, though Undo then has nothing to go back to |
-| `.gitignore` | Keeps this whole folder out of git | No |
+| `.gitignore` | Keeps this whole folder out of git, or, with `"git": "inputs"`, only what a build writes again | No |
 
 ### Editing names and structure
 
@@ -58,10 +59,29 @@ In Codex this file isn't touched. Codex has no personal, uncommitted notes file 
 - **`floorplan/`** contains its own `.gitignore` that ignores everything in the folder, including itself. Your `.gitignore` isn't changed, and the folder never appears in `git status`.
 - **`CLAUDE.local.md`** is listed in `.git/info/exclude`, the per-clone ignore list that is never committed. If your project already ignores it, nothing is added.
 
-The map is personal to each clone. Teammates who install Floorplan make their own.
+The map is personal to each clone. Teammates who install Floorplan make their own. (If you want the inputs shared, see the next section.)
 
 If you committed a `floorplan/` folder before, ignoring it doesn't untrack those files. The build tells you the command that does, which keeps the files on disk:
 
 ```bash
 git rm -r --cached floorplan
 ```
+
+## Keeping the inputs in git
+
+Sometimes the map's inputs belong in the repo: so a fresh clone, or an AI worker that starts a session with no memory of the last one, finds the structure and the names without anyone building a map first. Add `"git": "inputs"` to `floorplan/architecture.json` (the default is `"none"`, which is everything above):
+
+```json
+{ "git": "inputs", "project": { "name": "Acme Shop" }, "nodes": [] }
+```
+
+- **`floorplan/.gitignore`** then ignores only what a build writes again: `index.html`, `graph.json`, `artifact.html`, `query.mjs`, `serve.mjs`, `recent-work.json`, `.cache/` and exported `*-map.html` copies. It no longer ignores itself.
+- **What can be committed:** `architecture.json`, `descriptions/`, `names.json`, `targets.json`, `layers.json`, `plan.json`, `custom-flows.json`, `.gitignore` and `MAP.md`. Floorplan never commits anything: after a build, you (or the session that owns the repo) do.
+- **`MAP.md`** is the map as text, whatever `git` says. It's written again only when its text changes (the `As of` line doesn't count), so a committed copy changes when the map does, not on every build. A worker reads it first and changes the inputs, never that file. Its format is in [schema.md](../skills/floorplan/references/schema.md#mapmd).
+- **A fresh clone** has the inputs and `MAP.md`, but no map yet. `status.mjs` says so, and `refresh.mjs` scans the code and builds one from the inputs (a blueprint is redrawn from `plan.json`).
+- **The note in `CLAUDE.local.md`**, if you have one, then starts with a paragraph that points to `MAP.md`.
+- **Files git already tracks stay tracked.** If it tracks files the folder now ignores, the build prints the `git rm --cached` command for them.
+- **A rule from outside the folder** (a `.gitignore` above it, `.git/info/exclude`) that ignores `MAP.md` keeps the inputs out of git. The build warns and names the command that finds the rule: `git check-ignore -v floorplan/MAP.md`.
+- **Going back:** set `"git": "none"` (or remove the field) and build. The folder ignores itself again; what you committed stays tracked until you run `git rm -r --cached floorplan`.
+
+The inputs are descriptions an AI wrote from your code, and `MAP.md` repeats them. They don't hold secrets or code, but they do hold your file paths and names, so read them before you push a repo that others can see. See [Is it safe?](is-it-safe.md) and [Privacy & security](privacy-and-security.md).

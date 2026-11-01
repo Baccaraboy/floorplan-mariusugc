@@ -1,7 +1,8 @@
 // Keeps a short block in the project's CLAUDE.local.md pointing future Claude Code sessions at the map, so
 // "where is X / how does Y work" starts from the map instead of a fresh search of the code.
 // CLAUDE.local.md is Claude Code's personal, uncommitted project memory (loaded at launch like CLAUDE.md,
-// including from parent folders); the map itself isn't committed, so its pointer isn't either. The file
+// including from parent folders); the map itself isn't committed (unless the project sets "git": "inputs", which
+// commits its inputs and MAP.md), so its pointer isn't either. The file
 // is added to the repo's local ignore list (.git/info/exclude), which leaves tracked files untouched.
 // The block sits between markers and is rewritten in place; the rest of the file is never touched.
 // It's added only when the user asks for it (build.mjs --claude-md); a block that's already there is
@@ -14,11 +15,16 @@ const START = '<!-- floorplan:start -->';
 const END = '<!-- floorplan:end -->';
 const NAME = 'CLAUDE.local.md';
 
-function block(rel) {
+/** With "git": "inputs" the project commits MAP.md (the map as text) with its inputs, so a worker reads that first. */
+const pointer = (rel) => `Read \`${rel}/MAP.md\` first: it is this map as plain text (the parts and their key files, the endpoints, who writes where, the flows, the Health findings and the recent work), and the project commits it with the map's inputs, so a fresh clone has it. Edit the inputs in \`${rel}/\`, not that file, and leave committing them to the user.
+
+`;
+
+function block(rel, inputs = false) {
   return `${START}
 ## Floorplan: map of this codebase
 
-\`${rel}/\` holds a map of this codebase: every module, file and endpoint with a plain-English name and a one-line description, and what connects to what. For questions like "where is X", "how does Y work" or "what uses Z", look it up before searching the code (run these from the folder this file is in):
+${inputs ? pointer(rel) : ''}\`${rel}/\` holds a map of this codebase: every module, file and endpoint with a plain-English name and a one-line description, and what connects to what. For questions like "where is X", "how does Y work" or "what uses Z", look it up before searching the code (run these from the folder this file is in):
 
 - \`node ${rel}/query.mjs find "<words>"\`: modules, files and endpoints that match
 - \`node ${rel}/query.mjs show <file path | module id | "GET /path">\`: what it is, what it uses, what uses it
@@ -56,7 +62,7 @@ function excludeLocally(root) {
 }
 
 /** Refreshes the block, or adds it when `add` (the user asked for it); moves it out of a committed CLAUDE.md written by older versions. */
-export function writeClaudeMd(root, outDir, { add = false } = {}) {
+export function writeClaudeMd(root, outDir, { add = false, git: gitMode = 'none' } = {}) {
   const rel = path.relative(root, outDir).replace(/\\/g, '/');
   if (!rel || rel.startsWith('..') || path.isAbsolute(rel)) return 'skipped (map is outside the codebase)';
   const had = ['CLAUDE.local.md', 'CLAUDE.md', path.join('.claude', 'CLAUDE.md')].some((f) => stripBlock(read(path.join(root, f)) ?? '') != null);
@@ -79,7 +85,7 @@ export function writeClaudeMd(root, outDir, { add = false } = {}) {
   const old = read(file);
   if (old?.includes('<!-- floorplan:off -->')) return 'skipped (opted out)';
   const eol = old?.includes('\r\n') ? '\r\n' : '\n';
-  const text = block(rel).replace(/\n/g, eol);
+  const text = block(rel, gitMode === 'inputs').replace(/\n/g, eol);
   let next;
   if (old == null) next = text + eol;
   else {
