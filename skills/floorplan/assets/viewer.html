@@ -1001,7 +1001,13 @@ function cardTip(id) {
   const lines = st?.files ? tn('count.line', st.loc, { n: fmt(st.loc) }) : '';
   const size = !st?.files ? '' : PLAN ? (i.type === 'file' || i.type === 'module' ? t('tip.planned') : tn('count.plannedFile', st.files)) : i.type === 'file' || i.type === 'module' ? lines : `${tn('count.file', st.files)} · ${lines}`;
   const hints = [drillable(id) && state.container !== id ? `<span><span class="kbd">${t('tip.doubleClick')}</span> ${t('tip.open')}</span>` : '', `<span><span class="kbd">${t('tip.rightClick')}</span> ${t('tip.more')}</span>`].join('');
-  return `<div class="tt">${h(i.name)}</div><div class="td" style="text-transform:capitalize">${h(kindName(kind))}${size ? ` · ${size}` : ''}</div>${where ? `<div class="tp">${h(where)}</div>` : ''}${recentTip(id)}<div class="th">${hints}</div>`;
+  return `<div class="tt">${h(i.name)}</div><div class="td" style="text-transform:capitalize">${h(kindName(kind))}${size ? ` · ${size}` : ''}</div>${where ? `<div class="tp">${h(where)}</div>` : ''}${recentTip(id)}${extTip(id)}<div class="th">${hints}</div>`;
+}
+/** Hover lines extensions add to a card (addTipSection), each given the card's id. */
+function extTip(id) {
+  let out = '';
+  for (const fn of ext.tips) { try { out += fn(id) || ''; } catch (e) { console.error('floorplan extension', e); } }
+  return out;
 }
 /** Hover lines for recent work: what changed on this card and how it serves the request, or what changed inside it. */
 function recentTip(id) {
@@ -2343,7 +2349,7 @@ function playFlow({ title = t('flows.tour'), description = '', steps = [], inPla
   state.flow = { f: { id: 'tmp-' + Date.now(), title, description, steps: st }, i: 0, inPlace };
   flowStep();
 }
-const ext = { sections: { overview: [], item: [] }, listeners: {} };
+const ext = { sections: { overview: [], item: [] }, tips: [], listeners: {} };
 const custom = { panel: null };
 function emit(event, data) { for (const fn of ext.listeners[event] || []) { try { fn(data); } catch (e) { console.error('floorplan extension', e); } } }
 window.Floorplan = Object.freeze({
@@ -2385,6 +2391,8 @@ window.Floorplan = Object.freeze({
     return b;
   },
   addPanelSection(where, fn) { (ext.sections[where] ||= []).push(fn); },
+  // lines under a card's hover tooltip: fn(id) returns HTML, or nothing
+  addTipSection(fn) { ext.tips.push(fn); },
   showPanel(html, bind) { custom.panel = { html, bind }; setPanel(true); renderPanel(); },
   closePanel() { custom.panel = null; renderPanel(); },
   modal: showModal, toast, copy: (text) => copy(text),
