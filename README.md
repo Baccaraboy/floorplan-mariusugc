@@ -120,6 +120,8 @@ Plus guided **flows** you can request in plain words, a one-minute **Start here*
 
 The map speaks English by default and **German** on request: ask for "the floorplan in German", or add `"lang": "de"` to `floorplan/architecture.json`, and the buttons, glossary and descriptions are all in German. More languages are one file each; see [Languages](docs/i18n.md).
 
+**Who writes where:** list the databases, services and files your app writes to in `floorplan/targets.json`, with the parts that write to and read each one, and the map draws those writes and reads and gets a **Targets** panel. A target that should have one writer but has two turns red, with a fix in the Health check, which also points out calls the scan saw that the list leaves out ([format](skills/floorplan/references/schema.md#targets)).
+
 ### Also: blueprints, for apps you haven't built yet
 
 Floorplan is made for mapping code you already have. It can also start from a PRD, a spec or a description of something you want to build, and draw a **blueprint**: the same kind of map, showing every part, file, endpoint and screen you'd need and how they'd fit together. Cards are dashed to show it's a plan. Instead of a Health check you get a review of what the plan still leaves open, each part has a ready request to build it, and you can reshape the plan from the map ("also plan out refunds"). Once the code exists, the blueprint becomes a map of the real thing. See [Plan something you haven't built yet](docs/getting-started.md#plan-something-you-havent-built-yet).

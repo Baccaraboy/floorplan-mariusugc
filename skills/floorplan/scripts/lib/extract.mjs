@@ -106,7 +106,7 @@ function extractCalls(src, at, { skip } = {}) {
       const n = normalizeCallLiteral(m[2]);
       if (!n) continue;
       const lineNo = at(lineStart);
-      if (n.host && !IGNORED_HOST.test(n.host) &&!n.host.includes('${') && !n.host.includes('{')) hosts.push({ host: n.host, line: lineNo });
+      if (n.host && !IGNORED_HOST.test(n.host) &&!n.host.includes('${') && !n.host.includes('{')) hosts.push({ host: n.host, line: lineNo, ...(method ? { method } : {}) });
       if (n.path && !n.host) calls.push({ path: n.path, method, line: lineNo });
     }
   }
