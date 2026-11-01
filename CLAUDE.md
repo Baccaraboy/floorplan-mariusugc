@@ -99,6 +99,10 @@ git fetch upstream main
 git merge upstream/main          # Konflikte lösen, npm test, dann PR auf main des Forks
 ```
 
+Diesen PR mergt die Bauleitung mit **Merge-Commit** («Create a merge commit»), nie mit Squash oder Rebase: Sonst fehlen
+die Commits des Originals in der Geschichte von `main`, und beim nächsten Nachzug kommen dieselben Konflikte wieder
+(gelernt beim Nachzug 0.6.1, PR #13, 01.11.2026). Alle anderen PRs des Forks gehen per Squash.
+
 Änderungen gehen als PR an den Autor **nur mit Marius' Wort**. Dann: ein eigener Zweig ab `upstream/main`, nur die
 upstream-tauglichen Commits (ohne `CLAUDE.md` und anderes nur für den Fork), englische PR-Beschreibung im Stil des
 Projekts (`.github/PULL_REQUEST_TEMPLATE.md`, `CONTRIBUTING.md`), CHANGELOG unter «Unreleased».
