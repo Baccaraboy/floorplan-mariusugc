@@ -2,7 +2,7 @@
 // floorplan builder: validate floorplan/architecture.json against the scan, assign every file to a
 // node, attach import/HTTP/external edges, and write floorplan/graph.json + floorplan/index.html.
 //
-// usage: node build.mjs [root] [--arch <file>] [--scan <file>] [--out <dir>] [--check]
+// usage: node build.mjs [root] [--arch <file>] [--scan <file>] [--out <dir>] [--lang <code>] [--check]
 
 import fs from 'node:fs';
 import path from 'node:path';
@@ -14,6 +14,7 @@ import { buildPlanHealth } from './lib/blueprint.mjs';
 import { buildScreens } from './lib/screens.mjs';
 import { writeClaudeMd } from './lib/claudemd.mjs';
 import { detectAgent } from './lib/agent.mjs';
+import { languages, strings as langStrings, fill } from './lib/lang.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const SKILL_DIR = path.resolve(HERE, '..');
@@ -73,6 +74,12 @@ const ignoreGlobs = (isStrArr(arch.ignore) ? arch.ignore : []).map(compileGlob);
 const AUDIENCES = ['everyone', 'developers'];
 if (arch.audience !== undefined && !AUDIENCES.includes(arch.audience)) err(`audience "${arch.audience}" must be one of ${AUDIENCES.join(', ')}${didYouMean(String(arch.audience), AUDIENCES)}`);
 const audience = AUDIENCES.includes(arch.audience) ? arch.audience : 'everyone';
+// the language of the map's own words (buttons, panels, the glossary): --lang, else architecture.json "lang", else English
+const LANGS = languages();
+const langWanted = args.lang !== undefined ? args.lang : arch.lang;
+if (langWanted !== undefined && !LANGS.includes(langWanted)) err(`${args.lang !== undefined ? '--lang' : 'lang'} "${langWanted}" must be one of ${LANGS.join(', ')}${didYouMean(String(langWanted), LANGS)}`);
+const lang = LANGS.includes(langWanted) ? langWanted : 'en';
+const words = langStrings(lang);
 
 const byId = new Map();
 nodes.forEach((n, i) => {
@@ -377,7 +384,7 @@ const graph = {
   schema: 'floorplan/graph@1',
   meta: {
     generatedAt: new Date().toISOString(), scanAt: scan.generatedAt, rootName: scan.rootName, root: scan.root,
-    audience, agent,
+    audience, agent, lang,
     ...(scan.blueprint ? { blueprint: { source: scan.blueprint.source, stack: scan.blueprint.stack, assumptions: scan.blueprint.assumptions } } : {}),
     repos: scan.repos.map(({ path: p, name, branch, head, remote }) => ({ path: p, name, branch, head, remote })),
     counts: { files: included.length, loc: included.reduce((s, f) => s + f.loc, 0), unassigned: unassigned.length },
@@ -389,7 +396,7 @@ const graph = {
       tags: n.tags || [], paths: n.paths || [], packages: n.packages || [], hosts: n.hosts || [],
       stats: { ...stats.get(n.id), repos: [...stats.get(n.id).repos] },
     })),
-    ...(unassigned.length ? [{ id: 'unassigned', parent: null, label: 'Unassigned', kind: 'misc', summary: 'Files no node claims. Add globs in architecture.json to place them.', details: '', tags: [], paths: [], packages: [], hosts: [], stats: { ...stats.get('unassigned'), repos: [...stats.get('unassigned').repos] } }] : []),
+    ...(unassigned.length ? [{ id: 'unassigned', parent: null, label: words['unassigned.label'], kind: 'misc', summary: words['unassigned.summary'], details: '', tags: [], paths: [], packages: [], hosts: [], stats: { ...stats.get('unassigned'), repos: [...stats.get('unassigned').repos] } }] : []),
   ],
   files: included.map((f) => {
     const d = fileDesc.get(f.path);
@@ -422,7 +429,12 @@ fs.mkdirSync(outDir, { recursive: true });
 const trackedWarning = keepOutOfGit(outDir);
 fs.writeFileSync(path.join(outDir, 'graph.json'), JSON.stringify(graph, null, 0));
 
-const template = fs.readFileSync(path.join(SKILL_DIR, 'assets', 'viewer.html'), 'utf8');
+// The page's own words, in the chosen language: {{t:key}} in viewer.html's markup is filled in here, and the
+// table goes into the page for t() in its scripts (only this language, so the map stays one self-contained file).
+const template = fs.readFileSync(path.join(SKILL_DIR, 'assets', 'viewer.html'), 'utf8')
+  .replace(/\{\{t:([\w.-]+)\}\}/g, (_, k) => (k in words ? escapeHtml(words[k]) : fail(`viewer.html uses "${k}", which assets/lang/en.json doesn't have`)))
+  .replace('__FLOORPLAN_HTML_LANG__', lang)
+  .replace('/*__FLOORPLAN_STRINGS__*/null', () => JSON.stringify({ lang, strings: words }).replace(/<\/(script)/gi, '<\\/$1').replace(/\u2028/g, '\\u2028').replace(/\u2029/g, '\\u2029'));
 // The layout engine (elkjs 0.9.3) and fonts (Inter, JetBrains Mono) are bundled in assets/vendor/ and
 // inlined, so the map makes no outside requests and works offline.
 const vendor = path.join(SKILL_DIR, 'assets', 'vendor');
@@ -439,7 +451,7 @@ const page = (g) => template
   .replace('<!--__ELK_SCRIPT__-->', () => elkTag)
   .replace('/*__FONTS__*/', () => fontCss)
   .replace('/*__FLOORPLAN_DATA__*/null', () => JSON.stringify(g).replace(/<\/(script)/gi, '<\\/$1').replace(/\u2028/g, '\\u2028').replace(/\u2029/g, '\\u2029'))
-  .replace(/__FLOORPLAN_TITLE__/g, () => escapeHtml(`${arch.project.name} map`))
+  .replace(/__FLOORPLAN_TITLE__/g, () => escapeHtml(fill(words['app.title'], { name: arch.project.name })))
   .replace(/__FLOORPLAN_LOGO__/g, () => dataUri('logo.png'))
   .replace(/__FLOORPLAN_FAVICON__/g, () => dataUri('favicon.png'))
   .replace('<!--__UI_EXTENSIONS__-->', () => uiScripts);
@@ -467,6 +479,7 @@ if (hs && (hs.high || hs.medium || hs.low)) {
   for (const i of graph.health.issues.filter((x) => x.severity !== 'low').slice(0, 8)) report.push(`  [${i.severity}] ${i.title}`);
 }
 if (graph.screens?.length) report.push(`SCREENS  ${graph.screens.length} detected`);
+if (lang !== 'en') report.push(`LANGUAGE  ${words['lang.name']} (${lang}): the map's buttons, panels and glossary`);
 report.push(graph.recent
   ? `RECENT WORK  ${graph.recent.items.length} card(s) highlighted across ${graph.recent.tasks.length} task(s)`
   : `RECENT WORK  none highlighted${fs.existsSync(recentFile) ? '' : ' (no recent-work.json)'}`);

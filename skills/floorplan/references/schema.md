@@ -16,6 +16,7 @@ Contents: [Top level](#top-level) · [nodes](#nodes) · [Assignment rules](#how-
 | `flows` | array | no | guided walkthroughs through the board |
 | `tour` | array | no | the "Start here" tour shown on first open: 3–8 stops `{ "node": "<node id or file path>", "title": "…", "note": "…" }`, in plain language, in the order a newcomer should see them. The first flow is appended automatically |
 | `audience` | `"everyone"` \| `"developers"` | no | who names and descriptions are written for. Default `"everyone"`: plain language a non-technical owner understands (what it does for the business, in everyday words). `"developers"`: technical style for engineers |
+| `lang` | `"en"` \| `"de"` | no | the language of the map's own words (buttons, panels, the glossary), one of the tables in `assets/lang/`. Default `"en"`. Write names, descriptions, flows, the tour and recent work in it too. `build.mjs --lang <code>` overrides it for one build |
 | `include` | string[] | no | file categories to map. Default `["code"]`. Others: `config`, `docs` |
 | `ignore` | string[] | no | globs for files to leave off the board entirely (generated code, vendored libs, fixtures) |
 

@@ -126,7 +126,8 @@ test('the zoom buttons move out from under the ask bar on tablets and phones', (
 test('the phone sheet is reachable and closable by keyboard: Escape closes it, closed it is hidden from tab and screen readers, focus moves in and back', () => {
   assert.match(media('(max-width: 700px)'), /body\.no-panel #panel \{[^}]*visibility: hidden;/);
   assert.match(html, /else if \(isPhone\(\) && !document\.body\.classList\.contains\('no-panel'\)\) closeSheet\(\);/);
-  assert.match(html, /panel\.setAttribute\('role', 'dialog'\); panel\.setAttribute\('aria-label', 'Details'\)/);
+  assert.match(html, /panel\.setAttribute\('role', 'dialog'\); panel\.setAttribute\('aria-label', t\('panel\.details'\)\)/);
+  assert.ok(html.includes('"panel.details":"Details"'), 'the sheet is called "Details" (assets/lang/en.json)');
   assert.match(html, /if \(on && keyboardUser\) \{ sheetReturn = document\.activeElement; panel\.focus/);
   assert.match(html, /sheetReturn\.focus\?\./);
 });

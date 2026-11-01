@@ -12,6 +12,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { parseArgs, fmtNum, mapDir } from './lib/common.mjs';
 import { fallbackFileName, fallbackRouteName, routeKey } from './lib/names.mjs';
+import { languageNote } from './lib/lang.mjs';
 
 const args = parseArgs(process.argv.slice(2));
 const root = path.resolve(args._[0] || '.');
@@ -34,6 +35,8 @@ const audience = g.meta?.audience === 'developers' ? 'developers' : 'everyone';
 const STYLE = audience === 'developers'
   ? 'technical style for engineers: name the frameworks, patterns and mechanics where they help.'
   : 'plain language for a non-technical owner: what it does for the business or its users, in everyday words, still specific. No jargon (endpoint, ORM, blueprint, webhook, worker…): the path and method/URL are already shown next to it. See "Plain language" in references/writing-descriptions.md.';
+// The map's language (architecture.json "lang" or build.mjs --lang, copied into graph.meta): empty for English.
+const LANG_NOTE = languageNote(g.meta?.lang);
 
 // file -> neighbours, summarised by owning node
 const usesOf = new Map(), usedBy = new Map();
@@ -81,6 +84,7 @@ for (const [nid, list] of byNode) {
     const out = [];
     out.push(`# Worksheet ${key}: ${n?.label || nid}${parts > 1 ? ` (part ${i + 1}/${parts})` : ''}`);
     out.push(`Audience: ${audience}. Write in ${STYLE}`);
+    if (LANG_NOTE) out.push(LANG_NOTE);
     if (n?.summary) out.push(`Module: ${n.summary}`);
     out.push(`Write to: floorplan/descriptions/${key}.json (a skeleton is already there; fill in every "description", improve every "name").`);
     out.push('Entries marked REVIEW already have a description but their code changed: update name/description if the change matters, then delete the "review" field. Entries not listed here are fine; leave them alone.');
@@ -128,6 +132,6 @@ if (!index.length) { console.log('✓ Every file and route already has a descrip
 const totals = index.reduce((s, w) => ({ files: s.files + w.files, routes: s.routes + w.routes }), { files: 0, routes: 0 });
 console.log(`${index.length} worksheet(s) in floorplan/.cache/worksheets/ covering ${totals.files} files and ${totals.routes} routes still to describe.`);
 console.log('Each has a matching skeleton in floorplan/descriptions/<key>.json. Fill those in, then run build.mjs.');
-console.log(`Audience: ${audience}. Write in ${STYLE}\n`);
+console.log(`Audience: ${audience}. Write in ${STYLE}${LANG_NOTE ? `\n${LANG_NOTE}` : ''}\n`);
 console.log('key'.padEnd(34) + 'files'.padStart(6) + 'routes'.padStart(8) + 'loc'.padStart(8) + '  module');
 for (const w of index.sort((a, b) => b.files - a.files)) console.log(w.key.padEnd(34) + String(w.files).padStart(6) + String(w.routes).padStart(8) + fmtNum(w.loc).padStart(8) + '  ' + w.node);

@@ -118,6 +118,8 @@ Updates re-read only what changed, and an open map reloads itself. Everything ru
 
 Plus guided **flows** you can request in plain words, a one-minute **Start here** tour, **Export** to send a copy to anyone as one HTML file, a layout for **phones and tablets** with drag and pinch, search, keyboard shortcuts, and right-click actions on every card.
 
+The map speaks English by default and **German** on request: ask for "the floorplan in German", or add `"lang": "de"` to `floorplan/architecture.json`, and the buttons, glossary and descriptions are all in German. More languages are one file each; see [Languages](docs/i18n.md).
+
 ### Also: blueprints, for apps you haven't built yet
 
 Floorplan is made for mapping code you already have. It can also start from a PRD, a spec or a description of something you want to build, and draw a **blueprint**: the same kind of map, showing every part, file, endpoint and screen you'd need and how they'd fit together. Cards are dashed to show it's a plan. Instead of a Health check you get a review of what the plan still leaves open, each part has a ready request to build it, and you can reshape the plan from the map ("also plan out refunds"). Once the code exists, the blueprint becomes a map of the real thing. See [Plan something you haven't built yet](docs/getting-started.md#plan-something-you-havent-built-yet).
@@ -266,6 +268,7 @@ More in [Privacy and security](docs/privacy-and-security.md). Wondering whether 
 | [Privacy and security](docs/privacy-and-security.md) | What runs where, and what leaves your machine |
 | [Is it safe to install?](docs/is-it-safe.md) | No hooks, MCP servers, dependencies or downloads; every program it runs; checking your installed copy |
 | [Troubleshooting](docs/troubleshooting.md) | Common problems and fixes |
+| [Languages](docs/i18n.md) | Choosing the map's language, adding a new one |
 | [Developing Floorplan](docs/development.md) | Repo layout, local installs, releases |
 
 ## FAQ

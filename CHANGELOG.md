@@ -1,5 +1,10 @@
 # Changelog
 
+## Unreleased
+
+- **The map in German, and room for more languages:** the map's own words (buttons, panels, tooltips, messages, the tour and the glossary) now come from a language table in `skills/floorplan/assets/lang/`, and a German one is included. Add `"lang": "de"` to `floorplan/architecture.json`, or build once with `--lang de`, and Claude or Codex write the map's names, descriptions, flows, tour and recent work in German too, and answer questions in it. English stays the default and looks exactly as before. Adding a language is one file; see [Languages](docs/i18n.md).
+- **Small fixes on the way:** "1 hours ago" and "1 lines" now read "1 hour ago" and "1 line", and the glossary no longer underlines a word inside a longer one when a letter like "é" or "ä" follows it.
+
 ## 0.6.0 (2026-10-31)
 
 - **Health catches the classic mistakes in AI-built apps.** Five new checks, each in plain words with a fix to paste:

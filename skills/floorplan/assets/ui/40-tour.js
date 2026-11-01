@@ -5,8 +5,8 @@
   const SC = window.Floorplan;
   if (!SC) return;
   const G = SC.graph;
-  const { h } = SC;
-  const SEEN = 'tour-seen:' + (G.project?.name || G.meta?.rootName || 'map');
+  const { h, t, tn } = SC;
+  const SEEN ='tour-seen:' + (G.project?.name || G.meta?.rootName || 'map');
 
   const style = document.createElement('style');
   style.textContent = `
@@ -36,7 +36,7 @@
     const end = Math.max(cut.lastIndexOf('. '), cut.lastIndexOf('; '));
     return end > 80 ? cut.slice(0, end + 1) : cut.replace(/\s+\S*$/, '') + '…';
   };
-  const listOf = (names) => names.length <= 1 ? names.join('') : `${names.slice(0, -1).join(', ')} and ${names[names.length - 1]}`;
+  const listOf = (names) => names.length <= 1 ? names.join('') : t('tour.list', { items: names.slice(0, -1).join(', '), last: names[names.length - 1] });
   const tops = G.nodes.filter((n) => !n.parent && n.id !== 'unassigned');
   const bySize = (a, b) => (b.stats?.files || 0) - (a.stats?.files || 0);
   const screensOf = (id) => (G.screens || []).filter((s) => s.app === id).length;
@@ -44,26 +44,26 @@
   function flowStep() {
     const f = (G.flows || []).find((x) => !x.custom) || (G.flows || [])[0];
     if (!f || !f.steps?.length) return null;
-    return { ref: 'root', flow: f.id, kicker: 'One real path', title: f.title, note: `${f.description ? clip(f.description, 160) + ' ' : ''}Press Play to follow it through the code, one step at a time.` };
+    return { ref: 'root', flow: f.id, kicker: t('tour.kicker.path'), title: f.title, note: `${f.description ? clip(f.description, 160) + ' ' : ''}${t('tour.pressPlay')}` };
   }
   function autoSteps() {
     const p = G.project || {};
-    const steps = [{ ref: 'root', kicker: 'The codebase', title: p.name || 'This codebase', note: clip(p.summary) || 'A map of the main parts of this app and how they talk to each other.' }];
+    const steps = [{ ref: 'root', kicker: t('tour.kicker.codebase'), title: p.name || t('tour.thisCodebase'), note: clip(p.summary) || t('tour.mapOf') }];
     const ui = tops.filter((n) => n.kind === 'ui').sort(bySize).slice(0, 2);
     for (const n of ui) {
       const k = screensOf(n.id);
-      steps.push({ ref: 'n:' + n.id, kicker: 'What people use', title: n.label, note: clip(n.summary, 200) + (k > 1 ? ` It has ${k} screens.` : '') });
+      steps.push({ ref: 'n:' + n.id, kicker: t('tour.kicker.people'), title: n.label, note: clip(n.summary, 200) + (k > 1 ? ` ${tn('tour.screens', k)}` : '') });
     }
     let back = tops.filter((n) => n.kind === 'service' || n.kind === 'worker').sort(bySize);
     if (!back.length) back = tops.filter((n) => !['ui', 'external', 'test', 'script', 'config', 'infra', 'misc'].includes(n.kind)).sort(bySize);
-    for (const n of back.slice(0, ui.length > 1 ? 1 : 2)) steps.push({ ref: 'n:' + n.id, kicker: 'Behind the scenes', title: n.label, note: clip(n.summary, 200) });
+    for (const n of back.slice(0, ui.length > 1 ? 1 : 2)) steps.push({ ref: 'n:' + n.id, kicker: t('tour.kicker.behind'), title: n.label, note: clip(n.summary, 200) });
     const data = tops.find((n) => n.kind === 'data' && !back.includes(n));
-    if (data && steps.length < 5) steps.push({ ref: 'n:' + data.id, kicker: 'Where the data lives', title: data.label, note: clip(data.summary, 200) });
+    if (data && steps.length < 5) steps.push({ ref: 'n:' + data.id, kicker: t('tour.kicker.data'), title: data.label, note: clip(data.summary, 200) });
     const ext = tops.filter((n) => n.kind === 'external');
     if (ext.length) {
       steps.push({
-        ref: ext.length === 1 ? 'n:' + ext[0].id : 'root', kicker: 'Outside services', title: ext.length === 1 ? ext[0].label : `${ext.length} outside services`,
-        note: ext.length === 1 ? clip(ext[0].summary, 200) : `It also relies on ${listOf(ext.slice(0, 6).map((n) => n.label))}${ext.length > 6 ? ` and ${ext.length - 6} more` : ''}. They sit at the edge of the map; the lines show which parts talk to them.`,
+        ref: ext.length === 1 ? 'n:' + ext[0].id : 'root', kicker: t('tour.kicker.outside'), title: ext.length === 1 ? ext[0].label : tn('tour.outsideCount', ext.length),
+        note: ext.length === 1 ? clip(ext[0].summary, 200) : t('tour.reliesOn', { list: listOf(ext.slice(0, 6).map((n) => n.label)) + (ext.length > 6 ? ` ${t('common.andMore', { n: ext.length - 6 })}` : '') }),
       });
     }
     return steps;
@@ -82,7 +82,7 @@
   card.className = 'glass';
   card.hidden = true;
   card.setAttribute('role', 'dialog');
-  card.setAttribute('aria-label', 'Start here tour');
+  card.setAttribute('aria-label', t('tour.label'));
   document.body.appendChild(card);
   let steps = [], at = -1;
   const active = () => at >= 0;
@@ -95,13 +95,13 @@
   }
   function render() {
     const s = steps[at], last = at === steps.length - 1;
-    const tip = last ? `Replay this tour any time from <b>Start here</b> at the top.${window.FloorplanScreens ? ' <b>Screens</b> shows everything behind any page.' : ''}` : '';
-    card.innerHTML = `<button class="btn icon tx" data-x title="Close (Esc)">${SC.iconI('x')}</button>
-      <div class="tk"><span>Start here</span><i></i><span>${at + 1} of ${steps.length}</span>${s.kicker ? `<i></i><span>${h(s.kicker)}</span>` : ''}</div>
+    const tip = last ? `${t('tour.replay', { button: h(t('tour.button')) })}${window.FloorplanScreens ? ` ${t('tour.screensTip', { button: h(t('screens.button')) })}` : ''}` : '';
+    card.innerHTML = `<button class="btn icon tx" data-x title="${h(t('tour.close'))}">${SC.iconI('x')}</button>
+      <div class="tk"><span>${t('tour.name')}</span><i></i><span>${t('tour.progress', { i: at + 1, n: steps.length })}</span>${s.kicker ? `<i></i><span>${h(s.kicker)}</span>` : ''}</div>
       <div class="tt">${h(s.title)}</div>${s.note ? `<div class="tn">${h(s.note)}</div>` : ''}${tip ? `<div class="tip">${tip}</div>` : ''}
       <div class="tf"><div class="dots">${steps.map((_, k) => `<i class="${k <= at ? 'on' : ''}"></i>`).join('')}</div>
-        ${at > 0 ? `<button class="btn icon soft" data-back title="Back (←)">${SC.iconI('left')}</button>` : `<button class="btn" data-x>Skip</button>`}
-        ${s.flow ? `<button class="btn primary" data-play>${SC.iconI('right')}Play it</button>${last ? '' : '<button class="btn soft" data-next>Next</button>'}` : `<button class="btn primary" data-next>${last ? 'Done' : 'Next'}</button>`}
+        ${at > 0 ? `<button class="btn icon soft" data-back title="${h(t('tour.back'))}">${SC.iconI('left')}</button>` : `<button class="btn" data-x>${t('tour.skip')}</button>`}
+        ${s.flow ? `<button class="btn primary" data-play>${SC.iconI('right')}${t('tour.play')}</button>${last ? '' : `<button class="btn soft" data-next>${t('tour.next')}</button>`}` : `<button class="btn primary" data-next>${last ? t('tour.done') : t('tour.next')}</button>`}
       </div>`;
     card.querySelectorAll('[data-x]').forEach((b) => b.onclick = end);
     card.querySelector('[data-back]')?.addEventListener('click', back);
@@ -139,12 +139,12 @@
   }
   function start() {
     steps = buildSteps();
-    if (steps.length < 2) { SC.toast('There is not enough on this map for a tour yet.'); return; }
+    if (steps.length < 2) { SC.toast(t('tour.notEnough')); return; }
     SC.store.set(SEEN, true);
     show(0);
   }
 
-  const tourBtn = SC.addHeaderButton({ id: 'tour-btn', label: 'Start here', icon: 'home', title: 'A one-minute tour of this codebase', onClick: () => (active() ? end() : start()) });
+  const tourBtn = SC.addHeaderButton({ id: 'tour-btn', label: t('tour.button'), icon: 'home', title: t('tour.button.title'), onClick: () => (active() ? end() : start()) });
   const ic = tourBtn.querySelector('svg');
   if (ic) ic.innerHTML = '<circle cx="12" cy="12" r="9"/><path d="m15.5 8.5-2.2 4.8-4.8 2.2 2.2-4.8z"/>'; // compass
   window.addEventListener('keydown', (ev) => {

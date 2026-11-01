@@ -5,17 +5,18 @@
   const SC = window.Floorplan;
   // an exported copy without Health leaves the button out: an empty list would read as "all clear"
   if (!SC || (SC.exported && !SC.graph.health)) return;
-  const { h } = SC;
+  const { h, t, tn } = SC;
   const A = SC.agent || { name: 'Claude', app: 'Claude Code' };
   const issues = (SC.graph.health && SC.graph.health.issues) || [];
   // a blueprint (planned, not built) gets a design review of the plan instead of a code check
   const PLAN = !!SC.graph.meta.blueprint;
-  const FIX = PLAN ? 'Resolve' : 'Fix';
+  const FIX_WITH = t(PLAN ? 'health.resolveWith' : 'health.fixWith', { name: A.name });
+  const CHECK = PLAN ? t('health.review') : t('health.check');
 
   const SEV = {
-    high: { color: 'var(--sev-high)', group: 'Fix these first', word: 'important' },
-    medium: { color: 'var(--sev-medium)', group: 'Worth fixing soon', word: 'worth fixing' },
-    low: { color: 'var(--sev-low)', group: 'Good to tidy up', word: 'minor' },
+    high: { color: 'var(--sev-high)', group: t('health.sev.high.group'), word: t('health.sev.high.word') },
+    medium: { color: 'var(--sev-medium)', group: t('health.sev.medium.group'), word: t('health.sev.medium.word') },
+    low: { color: 'var(--sev-low)', group: t('health.sev.low.group'), word: t('health.sev.low.word') },
   };
   const ORDER = ['high', 'medium', 'low'];
   const count = (sev) => issues.filter((i) => i.severity === sev).length;
@@ -52,7 +53,7 @@
   function closeList() { isOpen = false; SC.closePanel(); }
   function showOnMap(issue) {
     const items = (issue.items || []).filter((id) => SC.exists(id)).map((id) => ({ id, note: (issue.notes && issue.notes[id]) || '' }));
-    if (!items.length) { SC.toast(`This one isn’t on the map. Use “${FIX} with ${A.name}” instead.`); return; }
+    if (!items.length) { SC.toast(t('health.notOnMap', { fix: FIX_WITH })); return; }
     if (isOpen) closeList();
     SC.showBoard({ title: issue.title, question: issue.detail, items });
   }
@@ -62,13 +63,13 @@
   function resolveHere(issue) {
     if (isOpen) closeList();
     if (!SC.draftChange(issue.change)) { fixWith(issue); return; }
-    SC.toast(issue.kind === 'question' ? 'Type your answer, then press Enter' : 'Edit the request if you like, then press Enter');
+    SC.toast(issue.kind === 'question' ? t('health.typeAnswer') : t('health.editRequest'));
   }
   function fixWith(issue) {
     SC.modal({
-      title: `${FIX} with ${A.name}`,
-      html: `<p class="hc-hint">Copy this request and paste it into <b>${A.app}</b>, opened in your project folder. It explains what to change and asks before anything risky.</p><pre>${h(issue.fix)}</pre>`,
-      actions: [{ label: 'Copy prompt', primary: true, icon: 'copy', onClick: () => { SC.copy(issue.fix); SC.toast(`Copied. Paste it into ${A.app}.`); } }],
+      title: FIX_WITH,
+      html: `<p class="hc-hint">${t('health.copyHint', { app: A.app })}</p><pre>${h(issue.fix)}</pre>`,
+      actions: [{ label: t('common.copyPrompt'), primary: true, icon: 'copy', onClick: () => { SC.copy(issue.fix); SC.toast(t('common.copiedPaste', { app: A.app })); } }],
     });
   }
   const onMap = (issue) => (issue.items || []).some((id) => SC.exists(id));
@@ -78,15 +79,15 @@
     const locs = issue.locations || [];
     if (!SC.technical() || !locs.length) return '';
     const shown = locs.slice(0, 3).map((l) => `${l.file}${l.line > 1 ? ':' + l.line : ''}`);
-    return `<div class="hc-w">${shown.map(h).join('<br>')}${locs.length > 3 ? `<br>+${locs.length - 3} more` : ''}</div>`;
+    return `<div class="hc-w">${shown.map(h).join('<br>')}${locs.length > 3 ? `<br>${t('common.more', { n: locs.length - 3 })}` : ''}</div>`;
   };
   const issueHtml = (issue, idx, note) => `<div class="hc-issue">
       <div class="hc-t"><span class="dot" style="background:${SEV[issue.severity].color}"></span><span>${h(issue.title)}</span></div>
       ${note ? `<div class="hc-n">${h(note)}</div>` : `<div class="hc-d">${h(issue.detail)}</div>`}
       ${locText(issue)}
       <div class="hc-a">
-        ${onMap(issue) ? `<button class="btn soft" data-hc-show="${idx}">${SC.iconI('search')}Show on map</button>` : ''}
-        ${SC.exported ? '' : here(issue) ? `<button class="btn soft" data-hc-here="${idx}">${SC.iconI('spark')}Resolve on the map</button>` : `<button class="btn soft" data-hc-fix="${idx}">${SC.iconI('spark')}${FIX} with ${A.name}</button>`}
+        ${onMap(issue) ? `<button class="btn soft" data-hc-show="${idx}">${SC.iconI('search')}${t('common.showOnMap')}</button>` : ''}
+        ${SC.exported ? '' : here(issue) ? `<button class="btn soft" data-hc-here="${idx}">${SC.iconI('spark')}${t('health.resolveHere')}</button>` : `<button class="btn soft" data-hc-fix="${idx}">${SC.iconI('spark')}${FIX_WITH}</button>`}
       </div>
     </div>`;
   const bindIssues = (el) => {
@@ -94,24 +95,25 @@
     el.querySelectorAll('[data-hc-fix]').forEach((b) => b.addEventListener('click', (ev) => { ev.stopPropagation(); fixWith(issues[+b.dataset.hcFix]); }));
     el.querySelectorAll('[data-hc-here]').forEach((b) => b.addEventListener('click', (ev) => { ev.stopPropagation(); resolveHere(issues[+b.dataset.hcHere]); }));
   };
-  const headline = () => urgent ? `${SC.plural(urgent, 'thing')} need${urgent === 1 ? 's' : ''} attention` : issues.length ? 'Nothing urgent' : 'No problems found';
-  const breakdown = () => `<div class="hc-sub">${ORDER.filter(count).map((s) => `<span><i class="dot" style="background:${SEV[s].color}"></i>${count(s)} ${SEV[s].word}</span>`).join('')}</div>`;
+  const headline = () => urgent ? tn('health.needAttention', urgent) : issues.length ? t('health.nothingUrgent') : t('health.noProblems');
+  const sevCount = (s) => t('health.sevCount', { n: count(s), word: SEV[s].word });
+  const breakdown = () => `<div class="hc-sub">${ORDER.filter(count).map((s) => `<span><i class="dot" style="background:${SEV[s].color}"></i>${sevCount(s)}</span>`).join('')}</div>`;
 
   function listHtml() {
     const top = `<div class="sec">
-        <div class="ph"><span class="ico" style="--c:${urgent ? SEV[count('high') ? 'high' : 'medium'].color : 'var(--ok)'}">${SC.icon('health')}</span><span class="kindlabel">${PLAN ? 'Design review' : 'Health check'}</span></div>
+        <div class="ph"><span class="ico" style="--c:${urgent ? SEV[count('high') ? 'high' : 'medium'].color : 'var(--ok)'}">${SC.icon('health')}</span><span class="kindlabel">${CHECK}</span></div>
         <h2 class="pt">${h(headline())}</h2>
-        <p class="pd">${PLAN ? 'We checked the plan for parts anyone on the internet could use, decisions the PRD leaves open, and pieces nothing connects to. Settling these now is cheaper than after it’s built.' : 'We looked for keys left in the code or sent to the browser, data and parts of your app anyone on the internet can reach (Supabase tables, Firebase rules, Stripe webhooks, endpoints), leftover files and files too big to edit safely. It’s a quick check, not a security audit.'}</p>
-        ${issues.length ? breakdown() : `<div class="hc-calm">Nothing stood out. This is a quick automatic check, not a full ${PLAN ? 'design' : 'security'} review.</div>`}
-        <div class="actions"><button class="btn soft" data-hc-back>${SC.iconI('left')}Back</button></div>
+        <p class="pd">${PLAN ? t('health.intro.plan') : t('health.intro.code')}</p>
+        ${issues.length ? breakdown() : `<div class="hc-calm">${PLAN ? t('health.calm.plan') : t('health.calm.code')}</div>`}
+        <div class="actions"><button class="btn soft" data-hc-back>${SC.iconI('left')}${t('health.back')}</button></div>
       </div>`;
     const groups = ORDER.map((sev) => {
       const list = issues.map((i, idx) => [i, idx]).filter(([i]) => i.severity === sev);
       return list.length ? `<div class="sec"><h3>${h(SEV[sev].group)} <span class="c">${list.length}</span></h3>${list.map(([i, idx]) => issueHtml(i, idx)).join('')}</div>` : '';
     }).join('');
-    const foot = !issues.length ? '' : SC.exported ? `<div class="sec" style="color:var(--text-3);font-size:12px;line-height:1.6">These are automatic hints from when this copy was exported.</div>` : `<div class="sec" style="color:var(--text-3);font-size:12px;line-height:1.6">These are automatic hints. ${issues.some(here)
-      ? `“Resolve on the map” puts a request in the Ask bar’s Change mode: finish or edit it, press Enter, and ${A.name} updates the plan and redraws the map. Undo puts it back.`
-      : `“${FIX} with ${A.name}” gives you a request to paste into ${A.app}; ${PLAN ? 'it explains the choice and updates the plan once you decide' : 'it checks the code before changing anything'}.`}</div>`;
+    const foot = !issues.length ? '' : SC.exported ? `<div class="sec" style="color:var(--text-3);font-size:12px;line-height:1.6">${t('health.foot.exported')}</div>` : `<div class="sec" style="color:var(--text-3);font-size:12px;line-height:1.6">${t('health.foot.hints')} ${issues.some(here)
+      ? t('health.foot.resolveHere', { name: A.name })
+      : t(PLAN ? 'health.foot.fixPlan' : 'health.foot.fixCode', { fix: FIX_WITH, app: A.app })}</div>`;
     return top + groups + foot;
   }
   function openList() {
@@ -125,8 +127,8 @@
 
   // ---------- chrome ----------
   const btn = SC.addHeaderButton({
-    id: 'btn-health', label: PLAN ? 'Review' : 'Health', icon: urgent ? 'health' : 'check',
-    title: `${PLAN ? 'Design review' : 'Health check'}: ${urgent ? headline() : 'nothing urgent'}`,
+    id: 'btn-health', label: PLAN ? t('health.button.plan') : t('health.button.code'), icon: urgent ? 'health' : 'check',
+    title: t('health.button.title', { what: CHECK, status: urgent ? headline() : t('health.nothingUrgentLower') }),
     onClick: () => (isOpen ? closeList() : openList()),
   });
   if (urgent) {
@@ -143,9 +145,9 @@
   SC.on('panel', () => { if (isOpen && openedAt && where() !== openedAt) { isOpen = false; SC.closePanel(); } });
 
   SC.addPanelSection('overview', () => ({
-    html: `<div class="sec"><h3>${PLAN ? 'Design review' : 'Health'}</h3><div class="list"><a class="row" data-hc-open>
+    html: `<div class="sec"><h3>${PLAN ? t('health.review') : t('health.title')}</h3><div class="list"><a class="row" data-hc-open>
         <span class="dot" style="background:${urgent ? SEV[count('high') ? 'high' : 'medium'].color : 'var(--ok)'}"></span>
-        <span class="rt"><div class="rn">${h(headline())}</div><div class="rd">${issues.length ? ORDER.filter(count).map((s) => `${count(s)} ${SEV[s].word}`).join(' · ') : PLAN ? 'Quick automatic check of the plan' : 'Quick automatic check of secrets, open endpoints and leftover files'}</div></span>
+        <span class="rt"><div class="rn">${h(headline())}</div><div class="rd">${issues.length ? ORDER.filter(count).map(sevCount).join(' · ') : PLAN ? t('health.quick.plan') : t('health.quick.code')}</div></span>
         <span class="rc">${SC.iconI('right')}</span></a></div></div>`,
     bind: (el) => el.querySelector('[data-hc-open]')?.addEventListener('click', (ev) => { ev.preventDefault(); openList(); }),
   }));
@@ -157,9 +159,9 @@
       const inside = (issue.items || []).filter((id) => id === itemId || (SC.exists(id) && SC.chain(id).includes(itemId)));
       if (!inside.length) return;
       const exact = issue.notes && inside.includes(itemId) ? issue.notes[itemId] : '';
-      hits.push(issueHtml(issue, idx, exact || (inside.length > 1 || inside[0] !== itemId ? `Affects ${SC.plural(inside.length, 'place')} in here` : '')));
+      hits.push(issueHtml(issue, idx, exact || (inside.length > 1 || inside[0] !== itemId ? tn('health.affects', inside.length) : '')));
     });
     if (!hits.length) return '';
-    return { html: `<div class="sec"><h3>${PLAN ? 'Design review' : 'Health'} <span class="c">${hits.length}</span></h3>${hits.slice(0, 6).join('')}${hits.length > 6 ? `<div class="more" data-hc-open style="cursor:pointer">+${hits.length - 6} more in the ${PLAN ? 'design review' : 'health check'}</div>` : ''}</div>`, bind: (el) => { bindIssues(el); el.querySelector('[data-hc-open]')?.addEventListener('click', openList); } };
+    return { html: `<div class="sec"><h3>${PLAN ? t('health.review') : t('health.title')} <span class="c">${hits.length}</span></h3>${hits.slice(0, 6).join('')}${hits.length > 6 ? `<div class="more" data-hc-open style="cursor:pointer">${t(PLAN ? 'health.moreIn.plan' : 'health.moreIn.code', { n: hits.length - 6 })}</div>` : ''}</div>`, bind: (el) => { bindIssues(el); el.querySelector('[data-hc-open]')?.addEventListener('click', openList); } };
   });
 })();
