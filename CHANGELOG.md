@@ -3,6 +3,7 @@
 ## Unreleased
 
 - **The map in German, and room for more languages:** the map's own words (buttons, panels, tooltips, messages, the tour and the glossary) now come from a language table in `skills/floorplan/assets/lang/`, and a German one is included. Add `"lang": "de"` to `floorplan/architecture.json`, or build once with `--lang de`, and Claude or Codex write the map's names, descriptions, flows, tour and recent work in German too, and answer questions in it. English stays the default and looks exactly as before. Adding a language is one file; see [Languages](docs/i18n.md).
+- **Names that stay put:** an optional `floorplan/names.json` holds your own names (and, if you like, descriptions) for parts, files and endpoints, as one text or one per language. The build applies it last, so it wins over `architecture.json` and `descriptions/`, and a name in it that's no longer on the map is an error with a "did you mean …". `describe.mjs` leaves those entries alone, and `refresh.mjs` never moves them: it says which fixed files moved or went away. After a first map, Claude or Codex offer to freeze the names they chose. Without the file, nothing changes.
 - **Small fixes on the way:** "1 hours ago" and "1 lines" now read "1 hour ago" and "1 line", and the glossary no longer underlines a word inside a longer one when a letter like "é" or "ä" follows it.
 
 ## 0.6.0 (2026-10-31)

@@ -16,7 +16,7 @@ skills/floorplan/
   SKILL.md             the workflow Claude and Codex follow
   agents/openai.yaml   how Codex lists the skill
   references/          formats and style guides Claude reads while working
-    schema.md                architecture.json and recent-work.json
+    schema.md                architecture.json, recent-work.json and names.json
     choosing-boundaries.md   how to carve a codebase into a good map
     writing-descriptions.md  plain-language names and descriptions
     blueprint.md             plan.json, for a map planned from a PRD
@@ -85,6 +85,7 @@ The tests use Node's built-in test runner, so there's nothing to install (`npm t
 | `firebase.test.mjs` | Firebase Cloud Functions: callables and onRequest functions as endpoints, the website's calls to them, Screens, Health, background functions (React + Firebase sample in `fixtures/`) |
 | `blueprint.test.mjs` | a map planned from a PRD before any code exists: plan.json errors, endpoints and calls, Screens, the design review, refreshing and switching to the real code (sample PRD in `fixtures/`) |
 | `blueprint-change.test.mjs` | changing a blueprint from the map: the agent's updated plan is checked, saved and highlighted, retried once when it fails the checks, and undone (stand-in CLI in `fixtures/fake-cli/`) |
+| `names.test.mjs` | fixed names from `names.json`: they win over architecture.json and descriptions, per language too, unknown entries are errors with a suggestion, describe.mjs leaves them alone, a refresh reports moves instead of making them, and nothing changes without the file |
 | `large-files.test.mjs` | files over the scan's size limit stay on the map with their line count, and the scan, Health and the map say they weren't read |
 | `sample-app.test.mjs` | a whole map of a two-repo shop: endpoints, cross-repo requests, Health, offline map, no secret values written, updates |
 | `serve.test.mjs` | the map's server: 127.0.0.1 only, its own host names only, token and same-origin checks, nothing served from outside its folder |
