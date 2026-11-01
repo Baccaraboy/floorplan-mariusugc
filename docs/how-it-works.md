@@ -126,4 +126,6 @@ It uses whichever made the map, and the other one if that isn't installed. Eithe
 
 In the Claude app, the map asks Claude through the app instead, with the same lookups but no access to your source.
 
-The same lookups help ordinary Claude Code sessions. If you say yes after your first map, the short section Floorplan adds to `CLAUDE.local.md` tells them to check the map (`query.mjs find`, `show`, `path`, `overview`) before searching the code from scratch.
+The lookups know the map's other floors too, when a project filled them in: `targets` (who writes where), `rules` (the rules and decisions, or those that hold at a part, file or endpoint, through its parents), `schedules` (what a clock starts, and when), `ops` (what is running, as your own tooling reported it), `outcomes` (what you see at each place) and `flows` (what starts each flow and what you have in the end). `show` lists them at a card and `overview` counts them, so Ask can answer "who may write to the orders table", "which rule holds here" or "is the worker up" from the map.
+
+The same lookups help ordinary Claude Code sessions. If you say yes after your first map, the short section Floorplan adds to `CLAUDE.local.md` tells them to check the map (`query.mjs find`, `show`, `path`, `overview`, and the floors: `targets`, `rules`, `schedules`, `ops`, `outcomes`, `flows`) before searching the code from scratch.

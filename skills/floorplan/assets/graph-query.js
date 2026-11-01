@@ -1,6 +1,7 @@
 // floorplan graph queries, shared by the viewer (as page tools for the Claude app) and by
 // floorplan/query.mjs (as a CLI that the Claude Code CLI or Codex calls). Plain script: no imports, no exports.
-// Item ids: n:<node id>  f:<file path>  r:<route index>  s:<file path>#<export index>
+// Item ids: n:<node id>  f:<file path>  r:<route index>  s:<file path>#<export index>  t:<target id> (a target of
+// targets.json, as rules and schedules name it)
 
 function createGraphQuery(G) {
   const nodes = new Map(G.nodes.map((n) => [n.id, n]));
@@ -92,10 +93,193 @@ function createGraphQuery(G) {
     return { dependsOn: fmt(out), usedBy: fmt(inn) };
   }
 
+  const unknown = (id) => new Error(`Unknown id "${id}". Use find first; ids look like n:api, f:src/app.ts, r:12, s:src/app.ts#3.`);
+
+  // ---------- the other floors: who writes where, the rules, the clock, what is running, what you see ----------
+  // Each reads only G, so a map without the file (targets.json, rules.json, schedules.json, ops.json, flows that say
+  // what you see) answers with empty lists, never an error. A target is "t:<id>", as rules and schedules name it; a
+  // rule or a schedule on a target reaches the target's box on the map.
+  const allTargets = G.targets || [], allRules = G.rules || [], allSchedules = G.schedules || [], allFlows = G.flows || [], allOutcomes = G.outcomes || {}, opsData = G.ops || null;
+  const targetById = new Map(allTargets.map((t) => [t.id, t]));
+  const nameOf = (id) => (id.startsWith('t:') ? targetById.get(id.slice(2))?.name ?? id.slice(2) : brief(id)?.name ?? id);
+  /** A card or a target as { id, name }; a target with its box on the map, when it has one. */
+  const ref = (id) => { const t = id.startsWith('t:') ? targetById.get(id.slice(2)) : null; return { id, name: nameOf(id), ...(t?.node && exists(t.node) ? { box: t.node } : {}) }; };
+  /** The chain up from an item: itself, its file (an endpoint or an export), its part and the parts above it; a target, then its box's chain. */
+  function chainOf(id) {
+    if (id.startsWith('t:')) { const t = targetById.get(id.slice(2)); return [id, ...(t?.node && exists(t.node) ? chainOf(t.node) : [])]; }
+    const out = [id];
+    if (id.startsWith('r:')) { const r = routes[+id.slice(2)]; if (r) out.push('f:' + r.f); }
+    if (id.startsWith('s:')) out.push('f:' + id.slice(2).replace(/#\d+$/, ''));
+    for (const n of owners(id)) if (!out.includes('n:' + n)) out.push('n:' + n);
+    return out;
+  }
+  /** Whether y is x, or lies inside it. */
+  const within = (y, x) => chainOf(y).includes(x);
+  /** The box on the map a target stands on, else the card itself. */
+  const boxOf = (id) => (id.startsWith('t:') ? targetById.get(id.slice(2))?.node || null : id);
+  /** What the words name: a card (an id, a path, a part id or "METHOD /path") or a target (its id, or "t:<id>"); null when neither. A part wins over a target with the same id. */
+  function placeOf(s) {
+    const id = normId(s);
+    if (exists(id)) return id;
+    const t = String(s || '').trim().replace(/^t:/, '');
+    return targetById.has(t) ? 't:' + t : null;
+  }
+  const given = (v) => v !== undefined && v !== null && String(v).trim() !== '';
+  /** Whether every word of the query is in one of the texts, whatever the case; an empty query matches everything. */
+  function hasWords(query, ...texts) {
+    const hay = texts.filter((x) => x != null).map((x) => String(Array.isArray(x) ? x.join(' ') : x).toLowerCase()).join('\n');
+    return String(query || '').toLowerCase().split(/\s+/).filter(Boolean).every((w) => hay.includes(w));
+  }
+
+  /** Who writes where: every target, or those whose id, name, kind or note has every word; writers and readers as cards with names. */
+  function targets(query) {
+    const side = (list) => list.flatMap((e) => e.items.map((id) => ({ ...ref(id), ref: e.ref, ...(e.in ? { within: e.in } : {}) })));
+    return allTargets.filter((t) => hasWords(query, t.id, t.name, t.kind, t.note)).map((t) => ({
+      id: t.id, name: t.name, kind: t.kind, policy: t.policy, conflict: !!t.conflict, writerCount: t.writerCount, ...(t.note ? { note: t.note } : {}),
+      box: t.node && exists(t.node) ? ref(t.node) : null, writers: side(t.writers || []), readers: side(t.readers || []),
+      // calls the scan saw into the target's box from parts the list doesn't name
+      ...(t.undeclared?.length ? { undeclared: t.undeclared.map((u) => ({ ...ref(u.part), direction: u.dir, calls: u.calls.length })) } : {}),
+    }));
+  }
+
+  const ruleOut = (r) => ({ id: r.id, kind: r.kind, title: r.title, status: r.status, ...(r.since ? { since: r.since } : {}), ...(r.until ? { until: r.until } : {}), source: r.source, text: r.text, ...(r.tags ? { tags: r.tags } : {}), everywhere: !r.items.length, appliesTo: r.items.map(ref) });
+  const inForceFirst = (list) => [...list.filter((r) => r.status !== 'retired'), ...list.filter((r) => r.status === 'retired')];
+  /** The item through which a rule reaches a place, nearest first: the place itself, its file, its part or a parent, or a target whose box is one of them; null when it doesn't. */
+  function reachesVia(r, place) {
+    const stands = new Map();
+    for (const item of r.items) for (const b of [item, boxOf(item)]) if (b && !stands.has(b)) stands.set(b, item);
+    for (const c of chainOf(place)) if (stands.has(c)) return stands.get(c);
+    return null;
+  }
+  /** The rules and decisions: all of them, those with every word in id, kind, title, text or tags, or those that hold at a place (a card or a target): the ones that name it, its file, its part or a parent first, each with the card it reaches it through, then the project-wide ones. The retired ones come after the ones in force. */
+  function rules(arg) {
+    const s = String(arg || '').trim();
+    const place = s ? placeOf(s) : null;
+    if (place) {
+      const here = inForceFirst(allRules).map((r) => [r, r.items.length ? reachesVia(r, place) : null]).filter(([r, via]) => via || !r.items.length);
+      return [...here.filter(([, via]) => via), ...here.filter(([, via]) => !via)].map(([r, via]) => ({ ...ruleOut(r), ...(via ? { via: ref(via) } : {}) }));
+    }
+    return inForceFirst(allRules).filter((r) => hasWords(s, r.id, r.kind, r.title, r.text, r.tags)).map(ruleOut);
+  }
+
+  const DAY = 24 * 60;
+  const pad2 = (n) => String(n).padStart(2, '0');
+  const hhmm = (m) => `${pad2(Math.floor(m / 60))}:${pad2(m % 60)}`;
+  /** The minute of the day now, on the plan's own clock (its time zone, else this computer's). */
+  const minuteNow = (tz) => {
+    try {
+      const p = new Intl.DateTimeFormat('en-GB', { timeZone: tz || undefined, hour: '2-digit', minute: '2-digit', hour12: false }).formatToParts(new Date());
+      return ((+p.find((x) => x.type === 'hour').value) % 24) * 60 + +p.find((x) => x.type === 'minute').value;
+    } catch { const d = new Date(); return d.getHours() * 60 + d.getMinutes(); }
+  };
+  /** The next start of the day: when, on the plan's clock, and in how many minutes; null for a plan without a daily time or switched off. */
+  const nextStart = (s) => {
+    if (s.enabled === false || !s.times?.length) return null;
+    const now = minuteNow(s.tz);
+    const at = s.times.find((x) => x >= now) ?? s.times[0];
+    return { at: hhmm(at), ...(s.tz ? { tz: s.tz } : {}), inMinutes: at >= now ? at - now : DAY - now + at };
+  };
+  /** What starts a plan: a card when it is on the map, else the path of the workflow or crontab the scan saw. */
+  const triggerOf = (s) => (!s.trigger ? null : /^[nfr]:/.test(s.trigger) && exists(s.trigger) ? ref(s.trigger) : { path: s.trigger });
+  /** What a clock starts: every plan with its cron in words, its time zone, what starts it, what it runs, and the next start of the day. */
+  function schedules() {
+    return allSchedules.map((s) => ({
+      id: s.id, title: s.title, cron: s.cron ?? null, human: s.human ?? null, tz: s.tz ?? null, enabled: s.enabled !== false, found: !!s.found, kind: s.kind ?? null,
+      trigger: triggerOf(s), runs: (s.runs || []).map(ref), calls: s.calls ?? null, note: s.note ?? null, source: s.source ?? null, times: s.times || [], next: nextStart(s),
+    }));
+  }
+  /** The cards a plan touches: its trigger and what it runs, a target by its box. */
+  const cardsOf = (s) => [...(s.trigger && /^[nfr]:/.test(s.trigger) && exists(s.trigger) ? [s.trigger] : []), ...(s.runs || []).map(boxOf).filter(Boolean)];
+
+  // the order of the list, and of "worst": down, then warn, then ok; unknown only when nothing else is known
+  const RANK = { down: 0, warn: 1, ok: 2, unknown: 3 };
+  const byWorst = (list) => list.slice().sort((a, b) => (RANK[a.status] ?? 9) - (RANK[b.status] ?? 9));
+  const worstOf = (list) => byWorst(list)[0]?.status ?? null;
+  const opsItem = (it) => { const { id, ...rest } = it; return { id, name: nameOf(id), ...rest }; };
+  /** What is running, as the owner's tooling last reported it: every entry worst first with the time of the report, or one place with the entries at it and inside it and the worst of them. */
+  function ops(where) {
+    const head = { asOf: opsData?.asOf ?? null, source: opsData?.source ?? null, stale: !!opsData?.stale };
+    const items = opsData?.items || [];
+    if (!given(where)) return { ...head, counts: opsData?.counts || { ok: 0, warn: 0, down: 0, unknown: 0 }, items: byWorst(items).map(opsItem) };
+    const place = placeOf(where);
+    if (!place) throw unknown(where);
+    const box = boxOf(place);
+    const mine = box ? items.filter((it) => within(it.id, box)) : [];
+    return { ...head, id: place, name: nameOf(place), status: worstOf(mine), items: byWorst(mine).map(opsItem) };
+  }
+
+  const flowById = new Map(allFlows.map((f) => [f.id, f]));
+  /** A sentence that arrives at a place: from which flow and step, with its example. */
+  const arrival = (o) => {
+    const f = flowById.get(o.flow), step = o.step != null ? f?.steps?.[o.step] : null;
+    return { flow: { id: o.flow, title: f?.title ?? o.flow }, ...(step ? { step: { index: o.step, ...ref(step.ref) } } : {}), text: o.text, ...(o.example ? { example: o.example } : {}) };
+  };
+  const placesSeen = () => Object.entries(allOutcomes).filter(([, list]) => Array.isArray(list) && list.length);
+  /** What you see, by place: what arrives at each place (a phone, a mailbox, a calendar) and from which flow and step; or at one place and the places inside it. */
+  function outcomes(where) {
+    let places = placesSeen();
+    if (given(where)) {
+      const place = placeOf(where);
+      if (!place) throw unknown(where);
+      const box = boxOf(place);
+      places = box ? places.filter(([w]) => within(w, box)) : [];
+    }
+    return places.map(([w, list]) => ({ where: ref(w), arrives: list.map(arrival) }));
+  }
+  const seen = (v) => ({ where: ref(v.where), text: v.text, ...(v.example ? { example: v.example } : {}) });
+  /** Every flow: what starts it (a clock's words when a schedule is behind it), its steps with what you see at one, and what you have in the end. A flow without those fields is just its steps. */
+  function flows() {
+    return allFlows.map((f) => ({
+      id: f.id, title: f.title, ...(f.description ? { description: f.description } : {}), ...(f.custom ? { custom: true } : {}),
+      ...(f.trigger ? { trigger: { kind: f.trigger.kind, text: f.trigger.text, ...(f.trigger.node ? { at: ref(f.trigger.node) } : {}), ...(f.trigger.schedule ? { schedule: f.trigger.schedule } : {}), ...(f.trigger.when ? { when: f.trigger.when } : {}), ...(f.trigger.tz ? { tz: f.trigger.tz } : {}), ...(f.trigger.cron ? { cron: f.trigger.cron } : {}) } } : {}),
+      steps: f.steps.map((s) => ({ ...ref(s.ref), note: s.note, ...(s.you_see ? { youSee: seen(s.you_see) } : {}) })),
+      ...(f.outcome ? { outcome: seen(f.outcome) } : {}),
+    }));
+  }
+  /** The floors at a card, each only when there is something: the rules here, the targets it writes and reads (or stands for), the schedules here, its status and what you see here. */
+  function floorsAt(id) {
+    const res = {};
+    const rulesHere = allRules.filter((r) => r.items.length && reachesVia(r, id));
+    if (rulesHere.length) res.rulesHere = rulesHere.map((r) => ({ id: r.id, title: r.title }));
+    // a part writes or reads a target when one of its own items, or one of a part inside it, is listed there
+    const touching = (side) => allTargets.flatMap((t) => { const hit = (t[side] || []).flatMap((e) => e.items).find((y) => within(y, id)); return hit ? [{ ...ref('t:' + t.id), ...(hit !== id ? { via: ref(hit) } : {}) }] : []; });
+    const written = touching('writers'), read = touching('readers');
+    if (written.length) res.targetsWritten = written;
+    if (read.length) res.targetsRead = read;
+    const box = allTargets.filter((t) => t.node === id);
+    if (box.length) res.boxOf = box.map((t) => ({ id: 't:' + t.id, name: t.name }));
+    const here = allSchedules.filter((s) => s.enabled !== false && cardsOf(s).some((c) => within(c, id)));
+    if (here.length) res.schedulesHere = here.map((s) => ({ id: s.id, title: s.title, when: s.human || s.cron || '' }));
+    const mine = (opsData?.items || []).filter((it) => within(it.id, id));
+    if (mine.length) {
+      const { id: _id, ref: _ref, status: _status, ...fields } = mine.find((it) => it.id === id) || {};
+      const inside = byWorst(mine.filter((it) => it.id !== id));
+      res.ops = { status: worstOf(mine), ...fields, ...(inside.length ? { inside: inside.map((it) => ({ ...ref(it.id), status: it.status })) } : {}) };
+    }
+    const arriving = placesSeen().filter(([w]) => within(w, id)).flatMap(([, list]) => list);
+    if (arriving.length) res.youSeeHere = arriving.map((o) => { const a = arrival(o); return { flow: a.flow, text: a.text, ...(a.example ? { example: a.example } : {}) }; });
+    return res;
+  }
+  /** The floors in numbers, and how to ask for each; only the floors the project filled in, so a map without them is unchanged. */
+  function floors() {
+    const out = {};
+    if (allTargets.length) out.targets = { count: allTargets.length, conflicts: allTargets.filter((t) => t.conflict).length, ask: 'targets [words]' };
+    if (allRules.length) { const n = allRules.filter((r) => r.kind === 'rule').length; out.rules = { rules: n, decisions: allRules.length - n, retired: allRules.filter((r) => r.status === 'retired').length, ask: 'rules [words | id]' }; }
+    if (allSchedules.length) {
+      const found = allSchedules.filter((s) => s.found).length;
+      const next = allSchedules.map((s) => [s, nextStart(s)]).filter(([, n]) => n).sort((a, b) => a[1].inMinutes - b[1].inMinutes)[0];
+      out.schedules = { count: allSchedules.length, found, declared: allSchedules.length - found, off: allSchedules.filter((s) => s.enabled === false).length, ...(next ? { next: `${next[1].at}${next[0].tz ? ` ${next[0].tz}` : ''} ${next[0].title}` } : {}), ask: 'schedules' };
+    }
+    if (opsData?.items?.length) out.ops = { asOf: opsData.asOf, stale: !!opsData.stale, counts: opsData.counts, ask: 'ops [id]' };
+    const places = placesSeen().length;
+    if (places) out.outcomes = { places, ask: 'outcomes [id]' };
+    return Object.keys(out).length ? out : null;
+  }
+
   function show(id) {
     id = normId(id);
     const b = brief(id);
-    if (!b) throw new Error(`Unknown id "${id}". Use find first; ids look like n:api, f:src/app.ts, r:12, s:src/app.ts#3.`);
+    if (!b) throw unknown(id);
     const parent = owners(id)[id.startsWith('n:') ? 1 : 0];
     const res = { ...b, ...(parent ? { partOf: brief('n:' + parent) && { id: 'n:' + parent, name: nodes.get(parent).label } } : {}) };
     const recent = (G.recent?.items || []).filter((x) => x.id === id);
@@ -130,6 +314,8 @@ function createGraphQuery(G) {
       res.file = { id: 'f:' + f.p, name: f.name };
       res.importedBy = G.links.filter((l) => l.b === 'f:' + f.p && (l.names || []).some((nm) => nm === s[0] || (nm === 'default' && s[3]))).slice(0, 25).map((l) => brief(l.a));
     }
+    // the other floors at this card, only where the project filled them in
+    Object.assign(res, floorsAt(id));
     return res;
   }
 
@@ -164,6 +350,7 @@ function createGraphQuery(G) {
   }
 
   function overview() {
+    const fl = floors();
     return {
       project: G.project.name, summary: G.project.summary || '',
       systems: G.nodes.filter((n) => !n.parent).map((n) => ({ id: 'n:' + n.id, name: n.label, kind: n.kind, description: n.summary || '', modules: (kidsOf.get(n.id) || []).map((k) => `n:${k} ${nodes.get(k).label}`) })),
@@ -174,11 +361,13 @@ function createGraphQuery(G) {
         ...(f.outcome ? { inTheEnd: `${f.outcome.where} ${f.outcome.text}` } : {}),
       })),
       counts: { files: G.files.length, endpoints: routes.length },
+      // the other floors in numbers, each with the query that lists it (targets, rules, schedules, ops, outcomes)
+      ...(fl ? { floors: fl } : {}),
       ...(G.recent ? { recentWork: (G.recent.tasks || []).map((t, ti) => ({ title: t.title, request: t.request, summary: t.summary, changed: G.recent.items.filter((x) => x.task === ti).map((x) => `${x.id} ${x.note}`) })) } : {}),
     };
   }
 
-  return { find, show, path, overview, exists, brief };
+  return { find, show, path, overview, targets, rules, schedules, ops, outcomes, flows, exists, brief };
 }
 
 // What an answer looks like, for both engines (JSON Schema).
@@ -256,6 +445,29 @@ function floorplanFlowInstructions(G, engine) {
   ].join('\n');
 }
 
+/**
+ * The map's other floors, when the project filled them in: one line per floor saying what it holds and how to ask for it,
+ * so the agent asks the map ("who may write to the orders table", "which rule holds here", "when does the report run",
+ * "is the worker up", "what do I see on my phone") before it reads code. Nothing for a map without them.
+ */
+function floorplanFloorLines(G, engine) {
+  const targets = G.targets || [], rules = G.rules || [], schedules = G.schedules || [], ops = G.ops?.items?.length ? G.ops : null;
+  const places = Object.values(G.outcomes || {}).filter((l) => Array.isArray(l) && l.length).length;
+  const told = (G.flows || []).some((f) => f.trigger || f.outcome); // a flow that says what starts it, or what you have in the end
+  if (!targets.length && !rules.length && !schedules.length && !ops && !places && !told) return [];
+  if (engine !== 'cli') return ['The map has more floors: the overview below counts them (floors), and get_item shows them at a card: the rules here, the targets it writes and reads, the schedules here, its status as the owner\'s tooling reported it, and what you see here. Answer from them when the question is about who writes where, which rule holds, when something runs, what is running or what the owner sees.'];
+  const q = (cmd) => `\`node floorplan/query.mjs ${cmd}\``;
+  const n = (k, v) => `${v} ${k}${v === 1 ? '' : 's'}`;
+  const lines = ['The map has more floors. Ask them before you read code; `show <id>` lists them at a card (rulesHere, targetsWritten, targetsRead, schedulesHere, ops, youSeeHere), and `overview` counts them (floors):'];
+  if (targets.length) { const c = targets.filter((t) => t.conflict).length; lines.push(`- ${q('targets [words]')}: who writes where, every target with its writers, readers and one-writer conflicts (${n('target', targets.length)}${c ? `, ${c} with more than one writer` : ''}).`); }
+  if (rules.length) { const r = rules.filter((x) => x.kind === 'rule').length; lines.push(`- ${q('rules [words | id]')}: the rules and decisions, or those that hold at a part, file, endpoint or target, through its parents (${n('rule', r)}, ${n('decision', rules.length - r)}).`); }
+  if (schedules.length) lines.push(`- ${q('schedules')}: what a clock starts, when (in words and as cron), and the next start of the day (${n('schedule', schedules.length)}).`);
+  if (ops) lines.push(`- ${q('ops [id]')}: what is running, as the owner's tooling reported it at ${ops.asOf}${ops.stale ? ' (stale: more than a day old)' : ''}: a status, version, last run and last error per card.`);
+  if (places) lines.push(`- ${q('outcomes [id]')} and ${q('flows')}: what you see at each place (a phone, a mailbox, a calendar; ${n('place', places)}), and what starts each flow and what you have in the end.`);
+  else if (told) lines.push(`- ${q('flows')}: every flow with what starts it and what you have in the end.`);
+  return lines;
+}
+
 function floorplanAskInstructions(G, engine) {
   const tools = engine === 'cli'
     ? `Query the map from the shell: \`node floorplan/query.mjs overview\`, \`node floorplan/query.mjs find "<words>" [--kind module|file|endpoint|symbol]\`, \`node floorplan/query.mjs show <id>\`, \`node floorplan/query.mjs path <fromId> <toId>\`. Every result is JSON with ids. Start with the map; read or grep source files when you need specifics the map does not have.`
@@ -265,6 +477,7 @@ function floorplanAskInstructions(G, engine) {
     `You answer questions about the codebase "${G.project.name}" for someone exploring an interactive architecture map of it.`,
     `The map has cards for modules (ids n:...), files (f:<path>), HTTP endpoints (r:<number>) and exported symbols (s:<path>#<number>), each with a human-readable name and description, connected by imports and HTTP calls.`,
     tools,
+    ...floorplanFloorLines(G, engine),
     bp ? `This map is a blueprint: a plan of a system that hasn't been built yet, so its files don't exist.${engine === 'cli' ? ` Instead of source files, read floorplan/plan.json${bp.source ? ` and ${bp.source} (what it was planned from)` : ''} when you need more than the map.` : ''} Answer about what would be built and why, and say plainly when the plan doesn't cover something.` : '',
     'Use a few lookups, not dozens. Then reply with JSON only: {"title", "answer", "items", "steps", "followups"}.',
     '- answer: Markdown, at most ~180 words, plain and specific. Refer to map items inline as [[id]] (they become clickable).',

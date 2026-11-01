@@ -122,6 +122,7 @@ Guided walkthroughs of the app's main jobs, like "Checkout" or "Sign up". A flow
 Type into the Ask bar at the bottom and press **Enter**. Claude or Codex answers in a few sentences and shows an **answer board**: just the cards involved, how they connect, a short note on each, and a numbered walkthrough when the answer is a sequence. Follow-up suggestions appear under the answer. **Back to map** returns to where you were.
 
 - **Right-click → Ask about this** on any card or line adds it to your question as context.
+- The other floors answer too, once they're filled in: who writes where (**Targets**), which rule or decision holds at a card (**Rules**), when a schedule runs next (**Clock**), what is running (**Ops**) and what you see where (**What you see**). Ask "who may write to the orders table", "which rule holds for the checkout", "when does the report run" or "is the worker up", and the answer comes from the map before the code. From a terminal, the same lookups are `node floorplan/query.mjs targets`, `rules`, `schedules`, `ops`, `outcomes` and `flows` (`--help` lists them).
 - The label in the bar shows what's answering. **Claude Code** means the Claude Code CLI and **Codex** means Codex, both running on your computer and able to read your source code. **Claude** means the map was opened in the Claude app, which answers from the map alone.
 - If neither is available, the bar explains what's needed. See [Troubleshooting](troubleshooting.md).
 

@@ -31,6 +31,15 @@ ${inputs ? pointer(rel) : ''}\`${rel}/\` holds a map of this codebase: every mod
 - \`node ${rel}/query.mjs path <from> <to>\`: how two things connect
 - \`node ${rel}/query.mjs overview\`: the whole system at a glance
 
+When the project filled in the map's other floors (the overview counts them under \`floors\`), ask them before you grep; \`show\` lists them at a card:
+
+- \`node ${rel}/query.mjs targets [words]\`: who writes where: every target with its writers, readers and one-writer conflicts
+- \`node ${rel}/query.mjs rules [words | id]\`: the rules and decisions, or those that hold at a part, file or endpoint, through its parents
+- \`node ${rel}/query.mjs schedules\`: what a clock starts, and when
+- \`node ${rel}/query.mjs ops [id]\`: what is running, as the project's own tooling last reported it
+- \`node ${rel}/query.mjs outcomes [id]\`: what you see at each place (a phone, a mailbox, a calendar), and from which flow
+- \`node ${rel}/query.mjs flows\`: every flow with what starts it and what you have in the end
+
 The map can lag behind recent edits, so confirm in the code before changing anything. Open it with \`node ${rel}/serve.mjs\`. After big changes, update it with the floorplan skill (the user can just ask to "update the floorplan"; only changed files are re-read).
 ${END}`;
 }

@@ -5,24 +5,43 @@
 //        node floorplan/query.mjs find "<words>" [--kind module|file|endpoint|symbol] [--limit 15]
 //        node floorplan/query.mjs show <id>
 //        node floorplan/query.mjs path <fromId> <toId>
+//        node floorplan/query.mjs targets [words]       who writes where: every target with its writers and readers
+//        node floorplan/query.mjs rules [words | id]    the rules and decisions, or those that hold at a place
+//        node floorplan/query.mjs schedules             what a clock starts, and when
+//        node floorplan/query.mjs ops [id]              what is running, as the owner's tooling reports it
+//        node floorplan/query.mjs outcomes [id]         what you see at each place
+//        node floorplan/query.mjs flows                 what starts each flow, and what you have in the end
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
+const HELP = [
+  'commands: overview | find "<words>" [--kind module|file|endpoint|symbol] | show <id> | path <fromId> <toId>',
+  '          targets [words] (who writes where) | rules [words | id] (the rules and decisions, or those that hold at a place)',
+  '          schedules (what a clock starts, and when) | ops [id] (what is running) | outcomes [id] (what you see at each place) | flows (what starts each flow, and what you have in the end)',
+].join('\n');
 const here = path.dirname(fileURLToPath(import.meta.url));
 const G = JSON.parse(fs.readFileSync(path.join(here, 'graph.json'), 'utf8'));
 const q = createGraphQuery(G);
 const argv = process.argv.slice(2);
+const help = argv.includes('--help') || argv.includes('-h');
 const flag = (name) => { const i = argv.indexOf('--' + name); if (i < 0) return undefined; const v = argv[i + 1]; argv.splice(i, 2); return v; };
 const kind = flag('kind'), limit = flag('limit');
 const [cmd, ...rest] = argv;
+if (help || !cmd) { console.log(HELP); process.exit(0); }
 try {
   let out;
   if (cmd === 'overview') out = q.overview();
   else if (cmd === 'find') out = q.find(rest.join(' '), kind, limit);
   else if (cmd === 'show') out = q.show(rest[0]);
   else if (cmd === 'path') out = q.path(rest[0], rest[1]);
-  else { console.log('commands: overview | find "<words>" [--kind module|file|endpoint|symbol] | show <id> | path <fromId> <toId>'); process.exit(cmd ? 1 : 0); }
+  else if (cmd === 'targets') out = q.targets(rest.join(' '));
+  else if (cmd === 'rules') out = q.rules(rest.join(' '));
+  else if (cmd === 'schedules') out = q.schedules();
+  else if (cmd === 'ops') out = q.ops(rest.join(' '));
+  else if (cmd === 'outcomes') out = q.outcomes(rest.join(' '));
+  else if (cmd === 'flows') out = q.flows();
+  else { console.log(HELP); process.exit(1); }
   console.log(JSON.stringify(out, null, 1));
 } catch (e) {
   console.log(JSON.stringify({ error: e.message }));
