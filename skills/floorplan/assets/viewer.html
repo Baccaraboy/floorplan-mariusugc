@@ -55,6 +55,7 @@
   --shadow-card: 0 1px 0 rgba(var(--ink), .035) inset, 0 12px 32px -20px rgba(0, 0, 0, .95);
   --shadow-float: 0 0 0 1px rgba(var(--ink), .05), 0 24px 64px -24px rgba(0, 0, 0, .9);
   --k-import: #6e6e6e; --k-http: #7aa7ff; --k-call: #b49cff; --k-rpc: #8f9bff; --k-event: #f19ac7; --k-queue: #f0c36b; --k-data: #63d2b8; --k-config: #6b7280; --k-contains: #4a4a4a;
+  --k-write: #f5a66b; --k-read: #9bd36a; /* who writes where (floorplan/targets.json) */
   --n-ui: #7cc4ff; --n-service: #b49cff; --n-worker: #f0c36b; --n-library: #6fd7a8; --n-feature: #8fb4ff; --n-data: #63d2b8; --n-config: #a3a3a3;
   --n-test: #f19ac7; --n-script: #f5a66b; --n-infra: #f28b8b; --n-external: #e3a6f0; --n-misc: #8b8b8b; --n-dir: #a3a3a3; --n-file: #a3a3a3;
   --n-module: #a3a3a3; --n-symbol: #c7b8ff; --n-route: #7aa7ff; --n-connector: #8b8b8b;
@@ -83,6 +84,7 @@
   --shadow-lift: 0 16px 32px -18px rgba(0, 0, 0, .4);
   --shadow-deep: 0 20px 48px -22px rgba(0, 0, 0, .4);
   --k-import: #50555c; --k-http: #1f5fd6; --k-call: #6a45d6; --k-rpc: #4450cf; --k-event: #c43a85; --k-queue: #a8710c; --k-data: #0b7f6b; --k-config: #4f5661; --k-contains: #8d8d8d;
+  --k-write: #b8560f; --k-read: #4f7f1f;
   --n-ui: #1f7ac4; --n-service: #7a5ad8; --n-worker: #a8710c; --n-library: #1a8a5b; --n-feature: #3b6fd1; --n-data: #0f8a76; --n-config: #666666;
   --n-test: #c43c86; --n-script: #c06a1d; --n-infra: #c94a4a; --n-external: #a24dbb; --n-misc: #666666; --n-dir: #666666; --n-file: #666666;
   --n-module: #666666; --n-symbol: #6a55c4; --n-route: #2f6fe0; --n-connector: #666666;
@@ -232,6 +234,9 @@ svg.dim .node:not(.hl) .card > * { opacity: .28; transition: opacity .3s var(--e
 .edge:hover .trace, .edge.hl .trace { stroke-opacity: 1; }
 .edge:hover .flow, .edge.hl .flow { opacity: .95; animation: flow 1.1s linear infinite; }
 @keyframes flow { to { stroke-dashoffset: -24; } }
+/* a read is drawn from the part to what it reads, like a write, but dashed, and on hover the data flows back to the reader */
+.edge.k-read .trace { stroke-dasharray: 7 5; }
+.edge.k-read .flow { animation-direction: reverse; }
 svg.dim .edge:not(.hl) { opacity: .1; }
 .edge { transition: opacity .3s var(--ease); }
 .pulse { fill: var(--on-hover); filter: drop-shadow(0 0 6px rgba(var(--ink), .8)); }
@@ -642,7 +647,7 @@ const NS = 'http://www.w3.org/2000/svg';
 const $ = (s) => document.querySelector(s);
 const svg = $('#svg'), vp = $('#viewport'), panel = $('#panel');
 const elk = new ELK();
-const KINDS = ['import', 'http', 'call', 'rpc', 'event', 'queue', 'data', 'config'];
+const KINDS = ['import', 'http', 'call', 'rpc', 'event', 'queue', 'data', 'config', 'write', 'read'];
 // connection names: plain by default (conn.plain.*), developer terms when "Show technical detail" is on (conn.tech.*)
 const KIND_LABEL = new Proxy({}, { get: (_, k) => WORDS.strings[`conn.${technical() ? 'tech' : 'plain'}.${String(k)}`] || k });
 let technicalFlag = false;

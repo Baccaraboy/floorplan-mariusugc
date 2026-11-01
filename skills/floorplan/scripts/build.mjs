@@ -9,7 +9,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { compileGlob, parseArgs, fmtNum, mapDir, keepOutOfGit } from './lib/common.mjs';
 import { fallbackFileName, fallbackRouteName, routeKey } from './lib/names.mjs';
-import { buildHealth } from './lib/health.mjs';
+import { buildHealth, TEST_FILE } from './lib/health.mjs';
 import { buildPlanHealth } from './lib/blueprint.mjs';
 import { buildScreens } from './lib/screens.mjs';
 import { writeClaudeMd } from './lib/claudemd.mjs';
@@ -398,11 +398,129 @@ for (const f of included) {
   }
 }
 
+// ---------- targets (floorplan/targets.json): who writes where ----------
+// The places the app writes to or reads from (a database, a service, a file, an API, a queue), which parts write
+// and which only read, and whether a target allows one writer only. The build checks the list, draws write and read
+// connections from each part to the target's box (its "external" node), and notes the calls the scan saw into that
+// box that the list doesn't mention. Those never count as writers on their own: the list stays the owner's word.
+const TARGET_KINDS = ['database', 'service', 'file', 'api', 'queue', 'other'];
+const POLICIES = ['single-writer', 'any'];
+const targetsFile = path.join(outDir, 'targets.json');
+let targetList = null;
+if (fs.existsSync(targetsFile)) {
+  let raw = null;
+  try { raw = JSON.parse(fs.readFileSync(targetsFile, 'utf8')); } catch (e) { err(`targets.json is not valid JSON: ${e.message}`); }
+  if (raw !== null) {
+    targetList = Array.isArray(raw) ? raw : Array.isArray(raw?.targets) ? raw.targets : null;
+    if (!targetList) err('targets.json must be a list of targets, or { "targets": [ … ] }');
+  }
+}
+const outTargets = [];
+if (targetList?.length) {
+  // the parts that hold an item, nearest first: a file's part and its parents, or a node's parents
+  const lineage = (item) => {
+    const out = [];
+    let id = item.startsWith('f:') ? owner.get(item.slice(2)) : byId.get(item.slice(2))?.parent;
+    while (id && id !== 'unassigned' && !out.includes(id)) { out.push(id); id = byId.get(id)?.parent; }
+    return out;
+  };
+  const inside = (x, y) => x === y || (y.startsWith('n:') && lineage(x).includes(y.slice(2)));
+  // a glob that takes in every file of a part stands for the part, so "api/**" draws one line from the API
+  const cover = (paths) => {
+    const hit = new Map();
+    for (const p of paths) for (const id of lineage('f:' + p)) hit.set(id, (hit.get(id) || 0) + 1);
+    const out = [];
+    for (const p of paths) {
+      const whole = lineage('f:' + p).filter((id) => hit.get(id) === stats.get(id)?.files).pop();
+      const item = whole ? 'n:' + whole : 'f:' + p;
+      if (!out.includes(item)) out.push(item);
+    }
+    return out;
+  };
+  // a path that the last refresh saw move (.cache/changes.json) is suggested by where it went, not by spelling
+  let movedTo = new Map();
+  try { movedTo = new Map((JSON.parse(fs.readFileSync(path.join(outDir, '.cache', 'changes.json'), 'utf8')).files?.moved || []).map((m) => [m.from, m.to])); } catch {}
+  const resolveParts = (list, where) => {
+    if (list === undefined) return [];
+    if (!Array.isArray(list)) { err(`${where} must be a list of part ids, paths or globs`); return []; }
+    const out = [];
+    list.forEach((s, j) => {
+      const w = `${where}[${j}]`;
+      if (!isStr(s)) return err(`${w} must be a part id, a path or a glob`);
+      if (byId.has(s)) return out.push({ ref: s, items: ['n:' + s] });
+      const g = compileGlob(s);
+      const hits = included.filter((f) => g.test(f.path)).map((f) => f.path);
+      if (hits.length) return out.push({ ref: s, items: cover(hits) });
+      if (fileByPath.has(s)) return err(`${w} "${s}" is a file that is not on the map (category ${fileByPath.get(s).category})`);
+      err(`${w} "${s}" is neither a part id nor a path or glob that matches a file on the map${includedSet.has(movedTo.get(s)) ? ` — did you mean "${movedTo.get(s)}"? (it moved there)` : didYouMean(s, [...ids, ...includedSet])}`);
+    });
+    return out;
+  };
+  // one writer, however it's listed: an entry inside another entry (a file of a listed part, or a repeat) adds none
+  const within = (a, b) => a.items.every((x) => b.items.some((y) => inside(x, y)));
+  const distinct = (entries) => {
+    const kept = [];
+    for (const e of entries) {
+      if (kept.some((k) => within(e, k))) continue;
+      for (let i = kept.length - 1; i >= 0; i--) if (within(kept[i], e)) kept.splice(i, 1);
+      kept.push(e);
+    }
+    for (const e of entries) if (!kept.includes(e)) e.in = kept.find((k) => within(e, k)).ref;
+    return kept;
+  };
+  const seenIds = new Set();
+  targetList.forEach((t, i) => {
+    const where = `targets.json targets[${i}]${isStr(t?.id) ? ` ("${t.id}")` : ''}`;
+    if (!t || typeof t !== 'object' || Array.isArray(t)) return err(`${where} must be an object`);
+    if (!isStr(t.id)) err(`${where}.id is required`);
+    else if (!/^[A-Za-z0-9_.\-]+$/.test(t.id)) err(`${where}.id may only use letters, digits, "_", "-" and "."`);
+    else if (seenIds.has(t.id)) err(`${where}.id duplicates an earlier target`);
+    seenIds.add(t.id);
+    const name = fixedText(t.name, `${where}.name`, true);
+    if (!TARGET_KINDS.includes(t.kind)) err(`${where}.kind "${t.kind}" must be one of ${TARGET_KINDS.join(', ')}${didYouMean(String(t.kind), TARGET_KINDS)}`);
+    if (!POLICIES.includes(t.policy)) err(`${where}.policy "${t.policy}" must be "single-writer" or "any"${didYouMean(String(t.policy), POLICIES)}`);
+    if (t.external !== undefined && !byId.has(t.external)) err(`${where}.external "${t.external}" is not a node in architecture.json${didYouMean(String(t.external), nodes.filter((n) => n?.kind === 'external').map((n) => n.id).concat(ids))}`);
+    if (t.writers === undefined) err(`${where}.writers is required (an empty list for a target nothing writes to)`);
+    const writers = resolveParts(t.writers, `${where}.writers`), readers = resolveParts(t.readers, `${where}.readers`);
+    const note = fixedText(t.note, `${where}.note`, false);
+    const writerCount = distinct(writers).length;
+    outTargets.push({
+      id: t.id, name: name || t.id, kind: t.kind, policy: t.policy, ...(note ? { note } : {}),
+      node: byId.has(t.external) ? 'n:' + t.external : null, writers, readers, writerCount,
+      conflict: t.policy === 'single-writer' && writerCount > 1, undeclared: [],
+    });
+  });
+  // draw them: part -> target, as a write or a read
+  for (const t of outTargets) if (t.node) for (const [list, k] of [[t.writers, 'write'], [t.readers, 'read']]) for (const e of list) for (const x of e.items) if (!inside(x, t.node)) addLink(x, t.node, k, { label: t.name });
+  // calls into a target's box the scan saw (web requests to its hosts, imports of its packages) from a part the list
+  // doesn't name, tests left out; the HTTP method, where the code shows it, says whether it writes or reads
+  const seen = [];
+  for (const e of scan.extEdges) { if (!includedSet.has(e.from)) continue; const m = pkgMatchers.find((pm) => pm.globs.some((g) => g.test(e.pkg))); if (m) seen.push({ file: e.from, node: 'n:' + m.id, line: 1, method: null }); }
+  for (const h of scan.hosts) { if (!includedSet.has(h.from)) continue; const m = hostMatchers.find((hm) => hm.globs.some((g) => g.test(h.host))); if (m) seen.push({ file: h.from, node: 'n:' + m.id, line: h.line || 1, method: h.method || null }); }
+  const isTest = (p) => TEST_FILE.test(p) || lineage('f:' + p).some((id) => byId.get(id)?.kind === 'test');
+  for (const node of new Set(outTargets.map((t) => t.node).filter(Boolean))) {
+    const listed = outTargets.filter((t) => t.node === node).flatMap((t) => [...t.writers, ...t.readers].flatMap((e) => e.items));
+    const byPart = new Map();
+    for (const c of seen) {
+      if (c.node !== node || isTest(c.file) || listed.some((y) => inside('f:' + c.file, y))) continue;
+      const part = owner.get(c.file) && owner.get(c.file) !== 'unassigned' ? 'n:' + owner.get(c.file) : 'f:' + c.file;
+      if (!byPart.has(part)) byPart.set(part, []);
+      const calls = byPart.get(part);
+      if (!calls.some((x) => x.file === c.file && x.line === c.line && x.method === c.method)) calls.push({ file: c.file, line: c.line, method: c.method });
+    }
+    const undeclared = [...byPart].map(([part, calls]) => ({
+      part, dir: calls.some((c) => /^(POST|PUT|PATCH|DELETE)$/.test(c.method)) ? 'write' : calls.some((c) => /^(GET|HEAD)$/.test(c.method)) ? 'read' : 'unknown',
+      calls: calls.sort((a, b) => a.file.localeCompare(b.file) || a.line - b.line),
+    }));
+    for (const t of outTargets) if (t.node === node) t.undeclared = undeclared;
+  }
+}
+
 // ---------- report ----------
 const pct = included.length ? (unassigned.length / included.length) * 100 : 0;
 const report = [];
 if (errors.length) {
-  report.push(`✗ ${errors.length} error(s) in ${path.relative(root, archFile)}${scan.blueprint ? ' or plan.json' : ''}${errors.some((e) => e.startsWith('names.json')) ? ' or names.json' : ''}:`);
+  report.push(`✗ ${errors.length} error(s) in ${path.relative(root, archFile)}${scan.blueprint ? ' or plan.json' : ''}${['names.json', 'targets.json'].filter((f) => errors.some((e) => e.startsWith(f))).map((f) => ` or ${f}`).join('')}:`);
   for (const e of errors) report.push(`  - ${e}`);
 }
 if (warnings.length) {
@@ -481,6 +599,7 @@ const graph = {
   links: [...links.values()],
   flows: outFlows,
   tour: outTour,
+  ...(outTargets.length ? { targets: outTargets } : {}),
   ...(outRecent?.items.length ? { recent: outRecent } : {}),
 };
 // extension hooks, computed from the finished graph plus the raw scan
@@ -542,6 +661,8 @@ if (hs && (hs.high || hs.medium || hs.low)) {
   for (const i of graph.health.issues.filter((x) => x.severity !== 'low').slice(0, 8)) report.push(`  [${i.severity}] ${i.title}`);
 }
 if (graph.screens?.length) report.push(`SCREENS  ${graph.screens.length} detected`);
+const nConflicts = outTargets.filter((t) => t.conflict).length;
+if (outTargets.length) report.push(`TARGETS  ${outTargets.length}${nConflicts ? ` (${nConflicts} with more than one writer)` : ''}`);
 if (lang !== 'en') report.push(`LANGUAGE  ${words['lang.name']} (${lang}): the map's buttons, panels and glossary`);
 report.push(graph.recent
   ? `RECENT WORK  ${graph.recent.items.length} card(s) highlighted across ${graph.recent.tasks.length} task(s)`
