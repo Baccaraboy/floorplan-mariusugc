@@ -1,0 +1,35 @@
+{
+  "rules": [
+    {
+      "id": "one-writer",
+      "kind": "rule",
+      "title": "One writer per target",
+      "text": "Only the server changes orders; the website reads them through the server.",
+      "applies": ["api", "orders", "shop-web/src/api.js", "POST /api/orders/:id/refund"],
+      "source": "CLAUDE.md § Build rules",
+      "since": "2026-10-25",
+      "status": "active"
+    },
+    {
+      "id": "merge-when-green",
+      "kind": "decision",
+      "title": "The lead merges when CI is green",
+      "text": "Owner, 26 Oct: \"merge yourself once the checks pass\".",
+      "applies": [],
+      "source": "docs/decisions.md",
+      "since": "2026-10-26"
+    },
+    {
+      "id": "no-direct-db",
+      "kind": "rule",
+      "title": "No database access from the website",
+      "text": "The website used to query the database itself; since the server owns orders, it asks the server instead.",
+      "applies": ["web"],
+      "source": "docs/decisions.md",
+      "since": "2026-09-01",
+      "until": "2026-10-25",
+      "status": "retired",
+      "tags": ["history"]
+    }
+  ]
+}

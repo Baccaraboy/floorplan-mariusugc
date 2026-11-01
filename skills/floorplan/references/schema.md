@@ -2,7 +2,7 @@
 
 `floorplan/architecture.json` describes the structure: subsystems, modules, external services, flows. Names and descriptions for individual files and routes go in `floorplan/descriptions/*.json` instead (see [writing-descriptions.md](writing-descriptions.md)). They're kept separate so parallel agents can write them without conflicts. `build.mjs` checks both against the scan and reports problems by field.
 
-Contents: [Top level](#top-level) · [nodes](#nodes) · [Assignment rules](#how-files-get-assigned) · [edges](#edges) · [annotations](#annotations) · [flows](#flows) · [Recent work](#recent-work) · [Fixed names](#fixed-names) · [Targets](#targets) · [Layers](#layers) · [Operations](#operations) · [git](#git) · [Full example](#full-example)
+Contents: [Top level](#top-level) · [nodes](#nodes) · [Assignment rules](#how-files-get-assigned) · [edges](#edges) · [annotations](#annotations) · [flows](#flows) · [Recent work](#recent-work) · [Fixed names](#fixed-names) · [Targets](#targets) · [Rules and decisions](#rules-and-decisions) · [Layers](#layers) · [Operations](#operations) · [git](#git) · [Full example](#full-example)
 
 ## Top level
 
@@ -202,6 +202,45 @@ A bare list (`[ … ]`) works as well as `{ "targets": [ … ] }`.
 - **Checked like everything else:** an unknown `kind`, `policy`, `external`, part id or path is an error with a "did you mean …".
 - A read is drawn like a write, from the part to the target, but dashed; on hover its data flows back to the reader.
 
+## rules and decisions
+
+`floorplan/rules.json` is optional. A project has rules ("one writer per target", "the AI delivers data, the code decides", "nothing is sent automatically") and decisions with a date ("since 26 Oct the lead merges once CI is green"). They sit in CLAUDE.md, READMEs, decision records and logs, scattered and without a link to the map. This file hangs them on the parts, files, endpoints and targets they apply to: whoever looks at a card sees which rules hold there, and whoever opens a rule sees where it holds. **Floorplan never makes a rule up.** Write the file only from what the project documents, and quote the place in `source`; a rule nobody wrote down is not a rule.
+
+```json
+{
+  "rules": [
+    { "id": "one-writer", "kind": "rule", "title": "One writer per target",
+      "text": "Only the worker writes to the database; the apps call its door.",
+      "applies": ["api.orders", "orders-db", "shop-web/src/lib/api.ts", "POST /orders"],
+      "source": "CLAUDE.md § Build rules", "since": "2026-10-25", "status": "active" },
+    { "id": "merge-when-green", "kind": "decision", "title": "The lead merges when CI is green",
+      "text": "Owner, 26 Oct: \"merge yourself once the checks pass\".", "applies": [],
+      "source": "docs/decisions.md", "since": "2026-10-26" }
+  ]
+}
+```
+
+| field | type | meaning |
+|---|---|---|
+| `id` | string | required, unique; letters, digits, `_ - .` |
+| `kind` | `"rule"` \| `"decision"` | required. A rule is how things are done; a decision is what someone settled, with a date |
+| `title` | string or one per language | required. One line, shown in the lists and on the cards |
+| `text` | string or one per language | required. The rule in one or two sentences, in the project's own words where possible |
+| `applies` | string[] | where it holds. Each entry is a node id, a file path or glob (a glob that covers every file of a part stands for the part), `"METHOD /path"` exactly as on the map, or a target id from [targets.json](#targets), which puts the rule on the target's box. An empty list means **the whole project** |
+| `source` | string | required. Where it is written down: a file and its section (`CLAUDE.md § Build rules`), a decision log, who said it and when |
+| `since` | date | optional, `YYYY-MM-DD`: since when it holds |
+| `until` | date | optional: when it stopped holding. A retired rule keeps its history |
+| `status` | `"active"` (default) \| `"retired"` | a retired rule stays in the file, dimmed at the end of the list |
+| `tags` | string[] | optional, free-form |
+
+A bare list (`[ … ]`) works as well as `{ "rules": [ … ] }`.
+
+- **Checked like everything else:** an unknown ref in `applies`, an unknown `kind`, `status` or field, a date in another format, a missing `title`, `text` or `source` is an error with a "did you mean …". A part id wins over a target with the same id.
+- **In `graph.json`:** `graph.rules` = `[{ id, kind, title, text, source, since, until, status, tags?, items }]`, with `items` the cards each ref resolved to (`n:…`, `f:…`, `r:…`, and `t:<target id>` for a target). The build reports `RULES  N rules, M decisions · K retired`, or `RULES  none (no rules.json)`.
+- **On the map:** a **Rules** button opens the list, the rules that apply everywhere first, then the rules and the decisions, the retired ones dimmed at the end; a rule opens with its text, source and places as links, and its cards on a board. Every card the rules reach, itself, its part or one of its parents, shows **Rules here** in its details.
+- **Health:** a retired rule that still names places is a minor finding, "Retired rule still applied", so the owner sees what is left to clean up in the file or in the code. Nothing else: the refs were checked by the build.
+- **In `MAP.md`:** a `## Rules` section after Targets, one block per rule: kind, dates, where it applies (by the names of the parts, targets and files, up to 8), the text in one line, the source.
+
 ## layers
 
 `floorplan/layers.json` is optional. It sorts the project's files into three layers, for an owner who might one day publish the code:
@@ -292,7 +331,7 @@ What a script has to produce: the JSON above, written whole (write to a temporar
 `"git"` in architecture.json says whether the map's files may go in git. Every script that writes the folder reads it and rewrites the folder's own `.gitignore` to match, so the mode lives in architecture.json, not in that file.
 
 - **`"none"`** (the default, and what a missing field means): the `.gitignore` in `floorplan/` ignores everything in the folder, itself included. Nothing of the map is ever committed, and `git status` doesn't show the folder.
-- **`"inputs"`**: the `.gitignore` ignores only what a build writes again: `index.html`, `graph.json`, `artifact.html`, `query.mjs`, `serve.mjs`, `recent-work.json`, `.cache/` and an exported `<project>-map.html`, and `ops.json`, which the owner's tooling rewrites with every run. What is left can be committed: `architecture.json`, `plan.json`, `names.json`, `targets.json`, `layers.json`, `custom-flows.json`, `descriptions/`, `MAP.md` and the `.gitignore` itself. Floorplan only reads and writes files; it never commits anything.
+- **`"inputs"`**: the `.gitignore` ignores only what a build writes again: `index.html`, `graph.json`, `artifact.html`, `query.mjs`, `serve.mjs`, `recent-work.json`, `.cache/` and an exported `<project>-map.html`, and `ops.json`, which the owner's tooling rewrites with every run. What is left can be committed: `architecture.json`, `plan.json`, `names.json`, `targets.json`, `rules.json`, `layers.json`, `custom-flows.json`, `descriptions/`, `MAP.md` and the `.gitignore` itself. Floorplan only reads and writes files; it never commits anything.
 
 Any other value is an error with a "did you mean …". When git already tracks files that the folder now ignores, the build prints the `git rm --cached` command that untracks them. If a rule from outside the folder (a `.gitignore` above it, `.git/info/exclude`) ignores `MAP.md`, the build warns that the inputs can't be committed.
 
@@ -305,11 +344,12 @@ Every build writes `floorplan/MAP.md`, whatever `git` says: the map as plain tex
 | head | the project name and summary, the day and commit it was last written at (`As of`), the language, the numbers (parts, files, connections), the Health sum, and the inputs in the folder |
 | `## Parts` | per part, in tree order: its description, kind and size in files, path patterns, layer (with `layers.json`), the part it is in and the parts inside it, the targets it writes and reads, its key files (up to 12, the most connected first, each with its name and one sentence) and its endpoints |
 | `## Targets` | per target: kind, policy, writers, readers, the note, calls the Health check found that targets.json doesn't list; a target with more writers than its policy allows is marked |
+| `## Rules` | per rule or decision: kind, status and dates, where it applies (the names of the parts, targets and files, up to 8), the text in one line, the source; the retired ones last |
 | `## Flows` | per flow: its description and numbered steps |
 | `## Health` | one line per finding: severity, title and the number of places. Never a place, a line or a value |
 | `## Recent work` | the tasks of `recent-work.json` and the cards each one touched |
 
-Each section has a marker right above its heading (`<!-- floorplan:parts -->`, `targets`, `flows`, `health`, `recent`), so a program finds it whatever the language. A section with nothing in it says "None.". Text from the code or from people is cut to one line, so it can't add a heading or a marker of its own.
+Each section has a marker right above its heading (`<!-- floorplan:parts -->`, `targets`, `rules`, `flows`, `health`, `recent`), so a program finds it whatever the language. A section with nothing in it says "None.". Text from the code or from people is cut to one line, so it can't add a heading or a marker of its own.
 
 ## Full example
 

@@ -431,30 +431,30 @@ if (fs.existsSync(targetsFile)) {
   }
 }
 const outTargets = [];
+// the parts that hold an item, nearest first: a file's part and its parents, or a node's parents (shared with rules.json)
+const lineage = (item) => {
+  const out = [];
+  let id = item.startsWith('f:') ? owner.get(item.slice(2)) : byId.get(item.slice(2))?.parent;
+  while (id && id !== 'unassigned' && !out.includes(id)) { out.push(id); id = byId.get(id)?.parent; }
+  return out;
+};
+const inside = (x, y) => x === y || (y.startsWith('n:') && lineage(x).includes(y.slice(2)));
+// a glob that takes in every file of a part stands for the part, so "api/**" draws one line from the API
+const cover = (paths) => {
+  const hit = new Map();
+  for (const p of paths) for (const id of lineage('f:' + p)) hit.set(id, (hit.get(id) || 0) + 1);
+  const out = [];
+  for (const p of paths) {
+    const whole = lineage('f:' + p).filter((id) => hit.get(id) === stats.get(id)?.files).pop();
+    const item = whole ? 'n:' + whole : 'f:' + p;
+    if (!out.includes(item)) out.push(item);
+  }
+  return out;
+};
+// a path that the last refresh saw move (.cache/changes.json) is suggested by where it went, not by spelling
+let movedTo = new Map();
+try { movedTo = new Map((JSON.parse(fs.readFileSync(path.join(outDir, '.cache', 'changes.json'), 'utf8')).files?.moved || []).map((m) => [m.from, m.to])); } catch {}
 if (targetList?.length) {
-  // the parts that hold an item, nearest first: a file's part and its parents, or a node's parents
-  const lineage = (item) => {
-    const out = [];
-    let id = item.startsWith('f:') ? owner.get(item.slice(2)) : byId.get(item.slice(2))?.parent;
-    while (id && id !== 'unassigned' && !out.includes(id)) { out.push(id); id = byId.get(id)?.parent; }
-    return out;
-  };
-  const inside = (x, y) => x === y || (y.startsWith('n:') && lineage(x).includes(y.slice(2)));
-  // a glob that takes in every file of a part stands for the part, so "api/**" draws one line from the API
-  const cover = (paths) => {
-    const hit = new Map();
-    for (const p of paths) for (const id of lineage('f:' + p)) hit.set(id, (hit.get(id) || 0) + 1);
-    const out = [];
-    for (const p of paths) {
-      const whole = lineage('f:' + p).filter((id) => hit.get(id) === stats.get(id)?.files).pop();
-      const item = whole ? 'n:' + whole : 'f:' + p;
-      if (!out.includes(item)) out.push(item);
-    }
-    return out;
-  };
-  // a path that the last refresh saw move (.cache/changes.json) is suggested by where it went, not by spelling
-  let movedTo = new Map();
-  try { movedTo = new Map((JSON.parse(fs.readFileSync(path.join(outDir, '.cache', 'changes.json'), 'utf8')).files?.moved || []).map((m) => [m.from, m.to])); } catch {}
   const resolveParts = (list, where) => {
     if (list === undefined) return [];
     if (!Array.isArray(list)) { err(`${where} must be a list of part ids, paths or globs`); return []; }
@@ -529,6 +529,79 @@ if (targetList?.length) {
     }));
     for (const t of outTargets) if (t.node === node) t.undeclared = undeclared;
   }
+}
+
+// ---------- rules and decisions (floorplan/rules.json) ----------
+// The project's rules ("one writer per target", "the AI delivers data, the code decides") and its dated decisions
+// ("since 26 Oct the lead merges when CI is green"), each with the place it is written down, hung on the parts, files,
+// endpoints and targets they apply to. Floorplan never makes one up: the file is written from what the project
+// documents, and the build only checks it, like targets.json (an unknown ref is an error with a "did you mean"), and
+// resolves each ref to its cards. A rule with no refs applies to the whole project. A retired rule keeps its history;
+// one that still names places is a minor Health finding (lib/health.mjs). The map shows the list under a Rules button
+// and on each card the rules that apply to it (ui/38-rules.js); MAP.md gets a Rules section.
+const RULE_KINDS = ['rule', 'decision'];
+const RULE_STATUSES = ['active', 'retired'];
+const RULE_FIELDS = ['id', 'kind', 'title', 'text', 'applies', 'source', 'since', 'until', 'status', 'tags'];
+const rulesFile = path.join(outDir, 'rules.json');
+let ruleList = null;
+if (fs.existsSync(rulesFile)) {
+  let raw = null;
+  try { raw = JSON.parse(fs.readFileSync(rulesFile, 'utf8')); } catch (e) { err(`rules.json is not valid JSON: ${e.message}`); }
+  if (raw !== null) {
+    ruleList = Array.isArray(raw) ? raw : Array.isArray(raw?.rules) ? raw.rules : null;
+    if (!ruleList) err('rules.json must be a list of rules, or { "rules": [ … ] }');
+  }
+}
+const outRules = [];
+if (ruleList?.length) {
+  const routeIdx = new Map(routesIn.map((r, i) => [routeKey(r), i]));
+  const targetIds = outTargets.map((t) => t.id);
+  const DATE = /^\d{4}-\d{2}-\d{2}$/;
+  const date = (v, where) => {
+    if (v === undefined || v === null) return null;
+    if (!isStr(v) || !DATE.test(v) || Number.isNaN(Date.parse(v))) { err(`${where} "${v}" must be a date like 2026-10-25`); return null; }
+    return v;
+  };
+  // where a rule applies: a part id, "METHOD /path", a file path or glob (a glob that covers a whole part stands for
+  // the part), or a target id, which puts the rule on the target's box. A part id wins over a target with the same id.
+  const resolveRef = (s, w) => {
+    if (!isStr(s)) { err(`${w} must be a part id, a file path or glob, "METHOD /path" or a target id`); return []; }
+    if (byId.has(s)) return ['n:' + s];
+    const m = /^([A-Za-z]+)\s+(\/\S*)$/.exec(s.trim());
+    if (m && routeIdx.has(`${m[1].toUpperCase()} ${m[2]}`)) return [`r:${routeIdx.get(`${m[1].toUpperCase()} ${m[2]}`)}`];
+    const g = compileGlob(s);
+    const hits = included.filter((f) => g.test(f.path)).map((f) => f.path);
+    if (hits.length) return cover(hits);
+    if (targetIds.includes(s)) return ['t:' + s];
+    if (fileByPath.has(s)) { err(`${w} "${s}" is a file that is not on the map (category ${fileByPath.get(s).category})`); return []; }
+    err(`${w} "${s}" is neither a part id, a path or glob that matches a file on the map, "METHOD /path" nor a target id${includedSet.has(movedTo.get(s)) ? ` — did you mean "${movedTo.get(s)}"? (it moved there)` : didYouMean(s, [...ids, ...targetIds, ...routeIdx.keys(), ...includedSet])}`);
+    return [];
+  };
+  const seenIds = new Set();
+  ruleList.forEach((r, i) => {
+    const where = `rules.json rules[${i}]${isStr(r?.id) ? ` ("${r.id}")` : ''}`;
+    if (!r || typeof r !== 'object' || Array.isArray(r)) return err(`${where} must be an object`);
+    // a misspelt field would silently change what a rule means ("apply" instead of "applies" reads as "everywhere")
+    for (const k of Object.keys(r)) if (!RULE_FIELDS.includes(k) && k !== '$schema') err(`${where}: unknown field "${k}"${didYouMean(k, RULE_FIELDS)}`);
+    if (!isStr(r.id)) err(`${where}.id is required`);
+    else if (!/^[A-Za-z0-9_.\-]+$/.test(r.id)) err(`${where}.id may only use letters, digits, "_", "-" and "."`);
+    else if (seenIds.has(r.id)) err(`${where}.id duplicates an earlier rule`);
+    seenIds.add(r.id);
+    if (!RULE_KINDS.includes(r.kind)) err(`${where}.kind "${r.kind}" must be "rule" or "decision"${didYouMean(String(r.kind), RULE_KINDS)}`);
+    const title = fixedText(r.title, `${where}.title`, true), text = fixedText(r.text, `${where}.text`, true);
+    if (!isStr(r.source)) err(`${where}.source is required: where the rule is written down (a file and its section, a decision log, who said it and when)`);
+    const since = date(r.since, `${where}.since`), until = date(r.until, `${where}.until`);
+    if (r.status !== undefined && !RULE_STATUSES.includes(r.status)) err(`${where}.status "${r.status}" must be "active" or "retired"${didYouMean(String(r.status), RULE_STATUSES)}`);
+    if (r.tags !== undefined && !isStrArr(r.tags)) err(`${where}.tags must be an array of strings`);
+    let items = [];
+    if (r.applies !== undefined && !Array.isArray(r.applies)) err(`${where}.applies must be a list of part ids, file paths or globs, "METHOD /path" or target ids (an empty list means the whole project)`);
+    else for (const [j, s] of (r.applies || []).entries()) for (const item of resolveRef(s, `${where}.applies[${j}]`)) if (!items.includes(item)) items.push(item);
+    outRules.push({
+      id: isStr(r.id) ? r.id : `rule-${i}`, kind: RULE_KINDS.includes(r.kind) ? r.kind : 'rule', title: title || '', text: text || '',
+      source: isStr(r.source) ? r.source.trim() : '', since, until, status: r.status === 'retired' ? 'retired' : 'active',
+      ...(isStrArr(r.tags) && r.tags.length ? { tags: r.tags } : {}), items,
+    });
+  });
 }
 
 // ---------- layers (floorplan/layers.json): system, setup and content ----------
@@ -673,7 +746,7 @@ if (fs.existsSync(opsFile)) {
 const pct = included.length ? (unassigned.length / included.length) * 100 : 0;
 const report = [];
 if (errors.length) {
-  report.push(`✗ ${errors.length} error(s) in ${path.relative(root, archFile)}${scan.blueprint ? ' or plan.json' : ''}${['names.json', 'targets.json', 'layers.json'].filter((f) => errors.some((e) => e.startsWith(f))).map((f) => ` or ${f}`).join('')}:`);
+  report.push(`✗ ${errors.length} error(s) in ${path.relative(root, archFile)}${scan.blueprint ? ' or plan.json' : ''}${['names.json', 'targets.json', 'rules.json', 'layers.json'].filter((f) => errors.some((e) => e.startsWith(f))).map((f) => ` or ${f}`).join('')}:`);
   for (const e of errors) report.push(`  - ${e}`);
 }
 if (warnings.length) {
@@ -755,6 +828,8 @@ const graph = {
   flows: outFlows,
   tour: outTour,
   ...(outTargets.length ? { targets: outTargets } : {}),
+  // the project's rules and decisions, each resolved to the cards it applies to (a target as "t:<id>")
+  ...(outRules.length ? { rules: outRules } : {}),
   // the layers as the map shows them (never the private words, which only Health gets)
   ...(layers ? { layers: {
     list: layers.list.map(({ where, ...l }) => ({ ...l, files: included.filter((f) => layers.layerOf(f.path) === l.id).length })),
@@ -816,7 +891,7 @@ if (scan.blueprint) { fs.mkdirSync(path.join(outDir, '.cache'), { recursive: tru
 // MAP.md: the map as plain text for AI workers (lib/mapmd.mjs), in the map's language. It is written only when its text
 // changes, not when only its "as of" line would, so a rebuild that changes nothing leaves the file (and a git diff of
 // it) alone, also a day or a commit later.
-const MAP_INPUTS = ['architecture.json', 'plan.json', 'names.json', 'targets.json', 'layers.json', 'custom-flows.json'];
+const MAP_INPUTS = ['architecture.json', 'plan.json', 'names.json', 'targets.json', 'rules.json', 'layers.json', 'custom-flows.json'];
 const mapFile = path.join(outDir, 'MAP.md');
 let mapNote;
 try {
@@ -839,6 +914,10 @@ if (hs && (hs.high || hs.medium || hs.low)) {
 if (graph.screens?.length) report.push(`SCREENS  ${graph.screens.length} detected`);
 const nConflicts = outTargets.filter((t) => t.conflict).length;
 if (outTargets.length) report.push(`TARGETS  ${outTargets.length}${nConflicts ? ` (${nConflicts} with more than one writer)` : ''}`);
+if (graph.rules) {
+  const n = graph.rules.filter((r) => r.kind === 'rule').length, m = graph.rules.length - n, k = graph.rules.filter((r) => r.status === 'retired').length;
+  report.push(`RULES  ${n} rule${n === 1 ? '' : 's'}, ${m} decision${m === 1 ? '' : 's'}${k ? ` · ${k} retired` : ''}`);
+} else report.push(`RULES  none${fs.existsSync(rulesFile) ? ' (nothing in rules.json)' : ' (no rules.json)'}`);
 if (graph.layers) {
   const nMixed = graph.layers.mixed;
   report.push(`LAYERS  ${graph.layers.list.map((l) => `${l.id} ${l.files}`).join(' · ')} files on the map${nMixed ? ` (${nMixed} part${nMixed === 1 ? '' : 's'} mixed)` : ''}`);

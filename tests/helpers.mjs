@@ -71,12 +71,18 @@ export async function launchBrowser() {
   try { return await pw.chromium.launch({ executablePath: process.env.FLOORPLAN_TEST_CHROMIUM || undefined }); } catch { return null; }
 }
 
-/** Opens a project's built map in a new page and waits for its first layout. Returns the page and every error it logged. */
+/**
+ * Opens a project's built map in a new page and waits for its first layout. Returns the page and every error it logged.
+ * The "Start here" tour, which starts on its own a moment after the first open, is marked as seen so it doesn't take
+ * over the panel in the middle of a test.
+ */
 export async function openMap(browser, root) {
   const page = await browser.newPage({ viewport: { width: 1400, height: 900 } });
   const errors = [];
   page.on('console', (m) => { if (m.type() === 'error') errors.push(m.text()); });
   page.on('pageerror', (e) => errors.push(String(e.message || e)));
+  const name = readGraph(root).project?.name || 'map';
+  await page.addInitScript((key) => { try { localStorage.setItem(key, 'true'); } catch {} }, `floorplan:tour-seen:${name}`);
   await page.goto(pathToFileURL(path.join(root, 'floorplan', 'index.html')).href);
   await page.waitForFunction(() => !!window.Floorplan?.state.layout || !document.querySelector('#empty').hidden, null, { timeout: 20000 });
   return { page, errors };
