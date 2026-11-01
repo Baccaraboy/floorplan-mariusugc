@@ -8,6 +8,10 @@
   const { h, t, tn } = SC;
   const A = SC.agent || { name: 'Claude', app: 'Claude Code' };
   const issues = (SC.graph.health && SC.graph.health.issues) || [];
+  // Publishability (floorplan/layers.json) is a group of its own, listed apart and left out of the counts and the badge
+  const PUB = SC.graph.health && SC.graph.health.publish;
+  const isPub = (i) => i.group === 'publish';
+  const usual = issues.filter((i) => !isPub(i));
   // a blueprint (planned, not built) gets a design review of the plan instead of a code check
   const PLAN = !!SC.graph.meta.blueprint;
   const FIX_WITH = t(PLAN ? 'health.resolveWith' : 'health.fixWith', { name: A.name });
@@ -19,8 +23,15 @@
     low: { color: 'var(--sev-low)', group: t('health.sev.low.group'), word: t('health.sev.low.word') },
   };
   const ORDER = ['high', 'medium', 'low'];
-  const count = (sev) => issues.filter((i) => i.severity === sev).length;
+  const count = (sev) => usual.filter((i) => i.severity === sev).length;
   const urgent = count('high') + count('medium');
+  // its summary names the layers as the map does (layers.json's own names, else the language table's)
+  const LAYER = { system: t('layers.name.system'), config: t('layers.name.config') };
+  const layerName = (id) => ((SC.graph.layers && SC.graph.layers.list) || []).find((l) => l.id === id)?.name || LAYER[id];
+  const pubLine = () => tn('health.publish.summary', PUB.system, { m: PUB.config, system: layerName('system'), config: layerName('config') });
+  const pubIssues = issues.filter(isPub);
+  const pubColor = () => (pubIssues.length ? SEV[ORDER.find((s) => pubIssues.some((i) => i.severity === s))].color : 'var(--ok)');
+  const UNCHECKED = { missing: t('health.publish.words.missing'), unset: t('health.publish.words.unset'), empty: t('health.publish.words.empty') };
 
   SC.icons.health = '<path d="M3 12h4l2.5-6 4 12 2.5-6H21"/>';
   SC.icons.check = '<path d="m5 12.5 4.5 4.5L19 7.5"/>';
@@ -44,6 +55,9 @@
     #btn-health.calm svg.i { color: var(--ok); }
     #modal .hc-hint { margin: 0; }
     #modal .hc-hint b { color: var(--text); font-weight: 500; }
+    .hc-pi { color: var(--text-3); font-size: 12.5px; line-height: 1.55; margin: 0 0 8px; }
+    .hc-ps { font-weight: 500; margin: 0 0 10px; }
+    .hc-pn { color: var(--warn-text); background: var(--warn-bg); border-radius: 12px; padding: 8px 11px; font-size: 12.5px; line-height: 1.5; margin: 0 0 10px; }
   `;
   document.head.appendChild(style);
 
@@ -95,7 +109,7 @@
     el.querySelectorAll('[data-hc-fix]').forEach((b) => b.addEventListener('click', (ev) => { ev.stopPropagation(); fixWith(issues[+b.dataset.hcFix]); }));
     el.querySelectorAll('[data-hc-here]').forEach((b) => b.addEventListener('click', (ev) => { ev.stopPropagation(); resolveHere(issues[+b.dataset.hcHere]); }));
   };
-  const headline = () => urgent ? tn('health.needAttention', urgent) : issues.length ? t('health.nothingUrgent') : t('health.noProblems');
+  const headline = () => urgent ? tn('health.needAttention', urgent) : usual.length ? t('health.nothingUrgent') : t('health.noProblems');
   const sevCount = (s) => t('health.sevCount', { n: count(s), word: SEV[s].word });
   const breakdown = () => `<div class="hc-sub">${ORDER.filter(count).map((s) => `<span><i class="dot" style="background:${SEV[s].color}"></i>${sevCount(s)}</span>`).join('')}</div>`;
 
@@ -104,17 +118,25 @@
         <div class="ph"><span class="ico" style="--c:${urgent ? SEV[count('high') ? 'high' : 'medium'].color : 'var(--ok)'}">${SC.icon('health')}</span><span class="kindlabel">${CHECK}</span></div>
         <h2 class="pt">${h(headline())}</h2>
         <p class="pd">${PLAN ? t('health.intro.plan') : t('health.intro.code')}</p>
-        ${issues.length ? breakdown() : `<div class="hc-calm">${PLAN ? t('health.calm.plan') : t('health.calm.code')}</div>`}
+        ${usual.length ? breakdown() : `<div class="hc-calm">${PLAN ? t('health.calm.plan') : t('health.calm.code')}</div>`}
         <div class="actions"><button class="btn soft" data-hc-back>${SC.iconI('left')}${t('health.back')}</button></div>
       </div>`;
     const groups = ORDER.map((sev) => {
-      const list = issues.map((i, idx) => [i, idx]).filter(([i]) => i.severity === sev);
+      const list = issues.map((i, idx) => [i, idx]).filter(([i]) => i.severity === sev && !isPub(i));
       return list.length ? `<div class="sec"><h3>${h(SEV[sev].group)} <span class="c">${list.length}</span></h3>${list.map(([i, idx]) => issueHtml(i, idx)).join('')}</div>` : '';
-    }).join('');
+    }).join('') + publishHtml();
     const foot = !issues.length ? '' : SC.exported ? `<div class="sec" style="color:var(--text-3);font-size:12px;line-height:1.6">${t('health.foot.exported')}</div>` : `<div class="sec" style="color:var(--text-3);font-size:12px;line-height:1.6">${t('health.foot.hints')} ${issues.some(here)
       ? t('health.foot.resolveHere', { name: A.name })
       : t(PLAN ? 'health.foot.fixPlan' : 'health.foot.fixCode', { fix: FIX_WITH, app: A.app })}</div>`;
     return top + groups + foot;
+  }
+  function publishHtml() {
+    if (!PUB) return '';
+    const list = issues.map((i, idx) => [i, idx]).filter(([i]) => isPub(i));
+    return `<div class="sec"><h3>${t('health.publish.title')} <span class="c">${list.length}</span></h3>
+        <p class="hc-pi">${t('health.publish.intro')}</p><div class="hc-ps">${h(pubLine())}</div>
+        ${UNCHECKED[PUB.words] ? `<div class="hc-pn">${h(UNCHECKED[PUB.words])}</div>` : ''}
+        ${list.length ? list.map(([i, idx]) => issueHtml(i, idx)).join('') : `<div class="hc-calm">${t('health.publish.calm')}</div>`}</div>`;
   }
   function openList() {
     isOpen = true;
@@ -147,9 +169,12 @@
   SC.addPanelSection('overview', () => ({
     html: `<div class="sec"><h3>${PLAN ? t('health.review') : t('health.title')}</h3><div class="list"><a class="row" data-hc-open>
         <span class="dot" style="background:${urgent ? SEV[count('high') ? 'high' : 'medium'].color : 'var(--ok)'}"></span>
-        <span class="rt"><div class="rn">${h(headline())}</div><div class="rd">${issues.length ? ORDER.filter(count).map(sevCount).join(' · ') : PLAN ? t('health.quick.plan') : t('health.quick.code')}</div></span>
-        <span class="rc">${SC.iconI('right')}</span></a></div></div>`,
-    bind: (el) => el.querySelector('[data-hc-open]')?.addEventListener('click', (ev) => { ev.preventDefault(); openList(); }),
+        <span class="rt"><div class="rn">${h(headline())}</div><div class="rd">${usual.length ? ORDER.filter(count).map(sevCount).join(' · ') : PLAN ? t('health.quick.plan') : t('health.quick.code')}</div></span>
+        <span class="rc">${SC.iconI('right')}</span></a>${PUB ? `<a class="row" data-hc-open>
+        <span class="dot" style="background:${pubColor()}"></span>
+        <span class="rt"><div class="rn">${t('health.publish.title')}</div><div class="rd">${h(pubLine())}</div></span>
+        <span class="rc">${SC.iconI('right')}</span></a>` : ''}</div></div>`,
+    bind: (el) => el.querySelectorAll('[data-hc-open]').forEach((a) => a.addEventListener('click', (ev) => { ev.preventDefault(); openList(); })),
   }));
 
   SC.addPanelSection('item', (itemId) => {

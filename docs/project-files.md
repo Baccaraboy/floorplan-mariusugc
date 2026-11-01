@@ -12,6 +12,7 @@ Floorplan writes to exactly two places in your project: the `floorplan/` folder,
 | `descriptions/*.json` | The name and description of every file and endpoint, one file per part | **Yes** |
 | `names.json` | Optional: names you've fixed for parts, files and endpoints, which win over everything else and no update changes. Only there if you or the AI made it | **Yes** |
 | `targets.json` | Optional: the databases, services and files your app writes to or reads from, which parts write and which read each one, and whether a target allows one writer only. Drives the **Targets** panel and its Health findings | **Yes** |
+| `layers.json` | Optional: which files are the system you could publish, which are the setup of this installation, and which are your content, by patterns. Drives the **Layers** switch and the Publishability findings. The private word list it names is not in this folder: keep it outside the repo | **Yes** |
 | `plan.json` | Blueprints only: the planned files, endpoints and screens, who may use each endpoint, the stack, assumptions and open questions. Names and descriptions live here instead of `descriptions/` | **Yes** |
 | `recent-work.json` | What was just worked on, and why. Replaced on every update | Rarely. The AI writes it |
 | `custom-flows.json` | Flows requested from the map | Only to delete one |

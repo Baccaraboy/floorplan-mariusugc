@@ -70,6 +70,8 @@ The Health check looks for passwords, API keys and private keys in your code, an
 
 The check is a helpful first pass, not a security audit.
 
+**Private words.** With a `floorplan/layers.json` that names a private word list (names of customers, people or places), the build reads that list from wherever you keep it, outside the repo, to find the words in your code. It records only each word's first letter and where it appears: the words and the list's location are never stored in the map, printed, or sent anywhere.
+
 ## Git
 
 Nothing Floorplan creates is committed. See [What's in your project](project-files.md#staying-out-of-git).

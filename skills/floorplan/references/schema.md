@@ -2,7 +2,7 @@
 
 `floorplan/architecture.json` describes the structure: subsystems, modules, external services, flows. Names and descriptions for individual files and routes go in `floorplan/descriptions/*.json` instead (see [writing-descriptions.md](writing-descriptions.md)). They're kept separate so parallel agents can write them without conflicts. `build.mjs` checks both against the scan and reports problems by field.
 
-Contents: [Top level](#top-level) · [nodes](#nodes) · [Assignment rules](#how-files-get-assigned) · [edges](#edges) · [annotations](#annotations) · [flows](#flows) · [Recent work](#recent-work) · [Fixed names](#fixed-names) · [Targets](#targets) · [Full example](#full-example)
+Contents: [Top level](#top-level) · [nodes](#nodes) · [Assignment rules](#how-files-get-assigned) · [edges](#edges) · [annotations](#annotations) · [flows](#flows) · [Recent work](#recent-work) · [Fixed names](#fixed-names) · [Targets](#targets) · [Layers](#layers) · [Full example](#full-example)
 
 ## Top level
 
@@ -198,6 +198,57 @@ A bare list (`[ … ]`) works as well as `{ "targets": [ … ] }`.
 - **Only listed writers count.** The scan's own findings never add a writer. When it sees a web request to a target's hosts, or an import of its packages, from a part that isn't listed as a writer or reader of any target on that box, it adds a minor Health finding: `POST`, `PUT`, `PATCH` and `DELETE` read as writes, `GET` as reads, and anything else (an imported package, a request whose method isn't in the code) as direction unknown. Tests are left out.
 - **Checked like everything else:** an unknown `kind`, `policy`, `external`, part id or path is an error with a "did you mean …".
 - A read is drawn like a write, from the part to the target, but dashed; on hover its data flows back to the reader.
+
+## layers
+
+`floorplan/layers.json` is optional. It sorts the project's files into three layers, for an owner who might one day publish the code:
+
+- **system**: the code and docs anyone could install and run, which is what would be published;
+- **config** ("Setup" on the map): the setup of this one installation, like key names, ids, paths, calendars and private settings;
+- **content**: the owner's own data, like customers, amounts and mails.
+
+The map then has a **Layers** switch that colours every box by its layer, and Health gets a **Publishability** group ([below](#publishability)).
+
+```json
+{
+  "layers": [
+    { "id": "config", "name": { "en": "Setup", "de": "Einrichtung" }, "description": "This installation's settings.",
+      "patterns": ["config/**", "**/*.local.*", "**/.env*"] },
+    { "id": "content", "patterns": ["content/**", "tests/data/**"] }
+  ],
+  "default": "system",
+  "privateWords": "~/.config/floorplan/private-words.txt"
+}
+```
+
+| field | type | meaning |
+|---|---|---|
+| `layers` | list | required. Each layer has an `id` (`system`, `config` or `content`, each at most once) and `patterns`: globs relative to the codebase root, as in `paths` (may be empty). `name` and `description` are optional: a string, or one per language as in [names.json](#fixed-names). Without a name the map says System, Setup and Content in its own language |
+| `default` | `"system"` \| `"config"` \| `"content"` | the layer of a file no pattern takes. Default `"system"`, so whatever nobody sorted is checked as publishable |
+| `privateWords` | string | optional. The path to your private word list: relative to the codebase root, absolute, or starting with `~/` for your home folder. Keep it outside the repo ([below](#the-private-word-list)) |
+
+- **Which file goes where:** each file takes the layer of the first pattern that matches it, in the order of the list (a layer's patterns in their order), else the default. So list the narrower layer first: with `config/**` before `config/customers/**` in content, `config/customers/list.js` is config.
+- **Parts:** a part takes the layer more than half of its files have; otherwise it's **mixed**. Mixed parts are where the layers stick together, and the map draws them with a dashed ring.
+- **Checked like everything else:** an unknown or repeated `id`, `patterns` that aren't a list, or an unknown `default` is an error with a "did you mean …"; a pattern that matches no file is a warning.
+- On a blueprint the layers are drawn, but there's no code to check yet.
+
+### Publishability
+
+With layers.json, Health also lists what would keep the system from being published. It's a group of its own, counted apart from the other findings ("Publishability: 5 findings in System, 1 in Setup"), so it never pushes one of them off the list. Every finding names the file and the line, never the value it found:
+
+| finding | in | severity |
+|---|---|---|
+| **Identifiers of one installation**: UUIDs (`8-4-4-4-12`), 32-character hex ids, and codes of 20 or more letters and digits that look generated, in strings and settings. Not hashes, nil UUIDs or API keys, which are the secret check's | system | medium |
+| **Private words**: the names of customers, people and places in your word list, as whole words in any case (`ACME_KEY` and `fetchAcmeOrders` count, `Acmes` doesn't), in code, comments and docs. Shown only by their first letter: `A***` | system, config | medium |
+| **Contact details**: email addresses and phone numbers. Not addresses at example.com, .test and the like, or noreply addresses | system | minor |
+| **Absolute paths of one computer**: `/Users/…`, `/home/<name>/…`, `/volume1/…`, `C:\…`. Not CI and container folders like `/home/runner/…` or `/home/node/…` | system | minor |
+| **System depends on content**: a system file imports a content file. Importing the setup is what it's for, so that's no finding | system | medium |
+
+Tests and fixtures are left out of all but the private words: their ids and addresses are usually made up, and a real name in a test is exactly what should be found. Content is never checked.
+
+### The private word list
+
+A plain text file with one word or name per line; lines starting with `#` are skipped, and entries under two characters are left out (they would match almost anywhere). It belongs outside the repo, for example in your home folder, and is never committed: the build reads it, finds the words, and writes only their first letter and where they are, never the words, nor the list's path. If the file isn't there, the build says so and skips that check. If it's inside the project and git doesn't ignore it, the build warns.
 
 ## Full example
 

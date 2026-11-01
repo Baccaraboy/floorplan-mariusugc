@@ -178,7 +178,8 @@ const scan = {
     ...(f.screens ? { screens: f.screens } : {}),
     ...(f.triggers ? { triggers: f.triggers } : {}),
   })),
-  edges: [...edgeMap.values()].map(({ from, to, names, count, dynamic }) => ({ from, to, ...(names.length ? { names } : {}), ...(count > 1 ? { count } : {}), ...(dynamic ? { dynamic } : {}) })),
+  // line: where the first import of `to` is, so a Health finding about the import (layers.json) can point at it
+  edges: [...edgeMap.values()].map(({ from, to, names, count, dynamic, line }) => ({ from, to, ...(names.length ? { names } : {}), ...(count > 1 ? { count } : {}), ...(dynamic ? { dynamic } : {}), ...(line ? { line } : {}) })),
   externals: [...externals.values()].map((e) => ({ id: `${e.eco}:${e.name}`, eco: e.eco, name: e.name, imports: e.count, files: e.files.size })),
   extEdges: dedupeExt(extEdges),
   routes,

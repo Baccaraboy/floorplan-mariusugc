@@ -137,8 +137,9 @@ function extractJs(src, filePath) {
   const code = stripCStyle(src);
   const at = lineIndex(code);
   const imports = [];
-  for (const m of all(/(?:^|[;\n}])\s*import\s+(?!\()((?:type\s+)?[^'";]*?)\s+from\s+["']([^"'\n]+)["']/g, code)) imports.push({ spec: m[2], ...parseImportClause(m[1]), line: at(m.index) });
-  for (const m of all(/(?:^|[;\n])\s*import\s+["']([^"'\n]+)["']/g, code)) imports.push({ spec: m[1], names: [], line: at(m.index) });
+  // the match can start on the line before (at its newline), so the line is taken where "import" is
+  for (const m of all(/(?:^|[;\n}])\s*import\s+(?!\()((?:type\s+)?[^'";]*?)\s+from\s+["']([^"'\n]+)["']/g, code)) imports.push({ spec: m[2], ...parseImportClause(m[1]), line: at(m.index + m[0].indexOf('import')) });
+  for (const m of all(/(?:^|[;\n])\s*import\s+["']([^"'\n]+)["']/g, code)) imports.push({ spec: m[1], names: [], line: at(m.index + m[0].indexOf('import')) });
   for (const m of all(/\bexport\s+(?:type\s+)?(\*(?:\s+as\s+\w+)?|\{[^}]*\})\s+from\s+["']([^"'\n]+)["']/g, code)) {
     // `export { a as b } from` → exported { b: 'a' }, the names this file passes on
     const clause = m[1].startsWith('{') ? parseImportClause(m[1]) : null;
