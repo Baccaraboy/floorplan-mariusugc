@@ -1,11 +1,11 @@
 // MAP.md: the map as plain text, for the AI workers (Claude Code, Codex …) that start in the repo and need the
 // structure before they build. build.mjs writes it next to graph.json, in the map's language: the head (project,
-// state, size), every part with its key files and endpoints, who writes where, the flows, the Health findings (a title
-// and a count, never a place or a value) and the recent work. The five sections and their order never change, and a
-// marker (<!-- floorplan:parts --> …) sits right above each heading, so a program finds a section without knowing the
-// language. The file stays under 1,500 lines however big the map is: the lists shrink step by step and end in
-// "… and N more". Whatever comes from the code or from a person is flattened to one line first, so it can't add a
-// heading, a list item or a marker of its own. The words come from the language table (map.* and a few keys the
+// state, size), every part with its key files and endpoints, who writes where, the rules and decisions, the flows, the
+// Health findings (a title and a count, never a place or a value) and the recent work. The six sections and their order
+// never change, and a marker (<!-- floorplan:parts --> …) sits right above each heading, so a program finds a section
+// without knowing the language. The file stays under 1,500 lines however big the map is: the lists shrink step by step
+// and end in "… and N more". Whatever comes from the code or from a person is flattened to one line first, so it can't
+// add a heading, a list item or a marker of its own. The words come from the language table (map.* and a few keys the
 // viewer shares), never from this file. The file is meant to be committed (with "git": "inputs"), so it holds nothing
 // that changes with every edit: no lines of code, and a stamp (the day and commit it was written) that build.mjs
 // leaves as it was when nothing else changed.
@@ -25,7 +25,7 @@ const STEPS = [
   { files: 0, routes: 0 },
 ];
 // The other sections have caps of their own, so together they take a third of the file at most.
-const CAP = { targets: 25, listed: 12, undeclared: 6, flows: 10, steps: 12, health: 40, tasks: 10, items: 8, paths: 12 };
+const CAP = { targets: 25, listed: 12, undeclared: 6, rules: 40, places: 8, flows: 10, steps: 12, health: 40, tasks: 10, items: 8, paths: 12 };
 
 const SEPARATORS = String.fromCharCode(0x2028, 0x2029);
 const CONTROL = new RegExp(`[\\x00-\\x1f\\x7f-\\x9f${SEPARATORS}]+`, 'g');
@@ -70,7 +70,7 @@ export function buildMapMd(graph, { words, dir = 'floorplan', inputs = [], maxLi
   const tn = (key, n, vars) => { const k = `${key}.${plural.select(n)}`; return t(k in words ? k : `${key}.other`, { n, ...vars }); };
   const more = (n) => t('map.more', { n });
   const bp = !!graph.meta?.blueprint;
-  const nodes = graph.nodes || [], files = graph.files || [], routes = graph.routes || [], links = graph.links || [], targets = graph.targets || [];
+  const nodes = graph.nodes || [], files = graph.files || [], routes = graph.routes || [], links = graph.links || [], targets = graph.targets || [], rules = graph.rules || [];
   const byId = new Map(nodes.map((n) => [n.id, n]));
   const fileAt = new Map(files.map((f) => [f.p, f]));
 
@@ -164,6 +164,19 @@ export function buildMapMd(graph, { words, dir = 'floorplan', inputs = [], maxLi
     }
     return L;
   };
+  // a rule or decision: its kind and dates, where it applies (a target by its name), its text in one line, its source
+  const byIdT = new Map(targets.map((tg) => [tg.id, tg]));
+  const placeRef = (item) => (item.startsWith('t:') ? (byIdT.has(item.slice(2)) ? targetRef(byIdT.get(item.slice(2))) : code(item.slice(2))) : refText(item));
+  const ruleLines = (r) => {
+    const L = [`### ${oneLine(r.title)} (${code(r.id)})`];
+    const facts = [r.kind === 'decision' ? t('rules.kind.decision') : t('rules.kind.rule'), r.status === 'retired' ? t('rules.retired') : '', r.since ? t('rules.since', { date: oneLine(r.since) }) : '', r.until ? t('rules.until', { date: oneLine(r.until) }) : ''].filter(Boolean);
+    L.push(`- ${t('map.kind')}: ${facts.join(' · ')}`);
+    L.push(`- ${t('rules.applies')}: ${r.items?.length ? inline(r.items, CAP.places, placeRef) : t('rules.everywhere')}`);
+    const text = clip(oneLine(r.text), 400);
+    if (text) L.push(`> ${quote(text)}`);
+    if (r.source) L.push(`- ${t('rules.source')}: ${clip(oneLine(r.source), 200)}`);
+    return L;
+  };
   const flowLines = (fl) => {
     const L = [`### ${oneLine(fl.title) || oneLine(fl.id)} (${code(fl.id)})`];
     const description = clip(oneLine(fl.description), 300);
@@ -223,6 +236,9 @@ export function buildMapMd(graph, { words, dir = 'floorplan', inputs = [], maxLi
 
   const section = (name, heading, body) => [`<!-- floorplan:${name} -->`, `## ${heading}`, '', ...(body.length ? body : [t('map.none')])];
   const targetsBody = [...joinEntries(targets.slice(0, CAP.targets).map(targetLines)), ...(targets.length > CAP.targets ? ['', `- ${more(targets.length - CAP.targets)}`] : [])];
+  // the rules in force first, the retired ones after them, each group in the file's order
+  const rulesInOrder = [...rules.filter((r) => r.status !== 'retired'), ...rules.filter((r) => r.status === 'retired')];
+  const rulesBody = [...joinEntries(rulesInOrder.slice(0, CAP.rules).map(ruleLines)), ...(rules.length > CAP.rules ? ['', `- ${more(rules.length - CAP.rules)}`] : [])];
   const flows = graph.flows || [];
   const flowsBody = [...joinEntries(flows.slice(0, CAP.flows).map(flowLines)), ...(flows.length > CAP.flows ? ['', `- ${more(flows.length - CAP.flows)}`] : [])];
   const healthBody = [...issues.slice(0, CAP.health).map(findingLine), ...(issues.length > CAP.health ? [`- ${more(issues.length - CAP.health)}`] : [])];
@@ -235,6 +251,7 @@ export function buildMapMd(graph, { words, dir = 'floorplan', inputs = [], maxLi
   ] : [];
   const rest = [
     ...section('targets', t('targets.title'), targetsBody), '',
+    ...section('rules', t('rules.title'), rulesBody), '',
     ...section('flows', t('header.flows'), flowsBody), '',
     ...section('health', t('health.title'), healthBody), '',
     ...section('recent', t('recent.title'), recentBody),

@@ -1180,7 +1180,34 @@ export function buildHealth({ graph, scan, arch, root, layers }) {
     });
   }
 
-  const KIND_ORDER = ['secret', 'public-env-secret', 'database-rules', 'stripe-webhook', 'env-file', 'unprotected-endpoint', 'single-writer', 'cors', 'large-file', 'hardcoded-url', 'unused-file', 'undeclared-target-call'];
+  // ---------- rules and decisions (graph.rules, from floorplan/rules.json) ----------
+  // A retired rule that still names places: either the code there still follows the old rule, or the entry wasn't
+  // cleaned up. Minor, so the owner sees what is left to tidy; the refs themselves were checked by the build.
+  const targetBox = (id) => targets.find((x) => x.id === id)?.node || null;
+  const boxOf = (item) => (item.startsWith('t:') ? targetBox(item.slice(2)) : item);
+  const placeName = (item) => (item.startsWith('t:') ? targets.find((x) => x.id === item.slice(2))?.name || item.slice(2) : item.startsWith('r:') ? `${graph.routes[+item.slice(2)]?.m} ${graph.routes[+item.slice(2)]?.p}` : itemName(item));
+  for (const r of (graph.rules || []).filter((x) => x.status === 'retired' && x.items.length)) {
+    const boxes = [...new Set(r.items.map(boxOf).filter(Boolean))];
+    const names = r.items.map(placeName);
+    issues.push({
+      id: 'retired-rule:' + r.id, kind: 'retired-rule', severity: 'low',
+      title: `Retired rule still applied: ${r.title}`,
+      detail: `floorplan/rules.json retires “${r.title}”${r.until ? ` (until ${r.until})` : ''}, but it still applies to ${plural(r.items.length, 'place')}: ${and(names)}. Either the code there still follows the old rule, or the entry just wasn't cleaned up. Source: ${r.source}.`,
+      items: boxes.slice(0, 24),
+      notes: Object.fromEntries(boxes.slice(0, 24).map((x) => [x, `Still listed under the retired ${r.kind} “${r.title}”`])),
+      locations: [],
+      fix: [
+        `Retired rule check: floorplan/rules.json says the ${r.kind} "${r.title}" (${r.source}) is retired${r.until ? ` since ${r.until}` : ''}, but it still applies to:`,
+        ...r.items.map((x) => `- ${placeName(x)}${boxOf(x) && !x.startsWith('t:') ? ` (${itemPath(x.startsWith('r:') ? 'f:' + graph.routes[+x.slice(2)]?.f : x)})` : ''}`),
+        ``,
+        `The rule said: ${r.text}`,
+        ``,
+        `For each place, read the code and tell me whether it still follows the retired rule. If it does, propose what to change so it follows what replaced it (the source says where that is written), and show me the plan before changing any code. If it doesn't, remove the place from the rule's "applies" in floorplan/rules.json, or delete the rule, and update the floorplan.`,
+      ].join('\n'),
+    });
+  }
+
+  const KIND_ORDER = ['secret', 'public-env-secret', 'database-rules', 'stripe-webhook', 'env-file', 'unprotected-endpoint', 'single-writer', 'cors', 'large-file', 'hardcoded-url', 'unused-file', 'undeclared-target-call', 'retired-rule'];
   issues.sort((a, b) => SEV_ORDER[a.severity] - SEV_ORDER[b.severity] || KIND_ORDER.indexOf(a.kind) - KIND_ORDER.indexOf(b.kind) || (b.locations?.length || 0) - (a.locations?.length || 0));
   const kept = issues.slice(0, 40);
   const summary = { high: 0, medium: 0, low: 0 };
