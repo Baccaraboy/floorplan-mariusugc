@@ -266,6 +266,27 @@ test('Publishability findings are there by title and count too: no id, no privat
   } finally { cleanup(r); cleanup(dir); }
 });
 
+test('a finding marked "not a problem" is out of the count in the head and comes last, marked as such, without its reason', () => {
+  const r = shopApp();
+  try {
+    scanAndBuild(r);
+    const secret = readGraph(r).health.issues.find((i) => i.kind === 'secret');
+    const NOTE = 'only a sample value, see the wiki';
+    writeJson(path.join(r, 'floorplan', 'health-dismissed.json'), { dismissed: [{ id: secret.id, severity: secret.severity, locations: secret.locations.map((l) => `${l.file}:${l.line}`), reason: NOTE }] });
+    build(r);
+    let md = mapOf(r);
+    assert.match(md, /^- Health: 1 important · 0 worth fixing · 0 minor$/m);
+    const findings = sectionOf(md, 'health').split('\n').filter((l) => l.startsWith('- '));
+    assert.equal(findings.at(-1), '- [important] A secret key is written into config.js (1 place) · marked as not a problem');
+    assert.equal(findings.filter((l) => / · marked as not a problem$/.test(l)).length, 1, 'only that one');
+    assert.ok(!md.includes(NOTE), 'the reason is a note to self');
+    assert.match(md, /^Inputs in floorplan\/: .*\bhealth-dismissed\.json\b/m, 'the file is one of the inputs');
+    build(r, '--lang', 'de');
+    md = mapOf(r);
+    assert.match(sectionOf(md, 'health'), /^- \[wichtig\] Ein geheimer Schlüssel steht in config\.js \(1 Stelle\) · als kein Problem markiert$/m);
+  } finally { cleanup(r); }
+});
+
 // ---------- size and safety ----------
 
 /** A made-up graph of the shape build.mjs writes, as big as the test needs. */

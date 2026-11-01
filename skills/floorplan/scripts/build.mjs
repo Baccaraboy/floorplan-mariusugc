@@ -1076,7 +1076,7 @@ if (scan.blueprint) { fs.mkdirSync(path.join(outDir, '.cache'), { recursive: tru
 // MAP.md: the map as plain text for AI workers (lib/mapmd.mjs), in the map's language. It is written only when its text
 // changes, not when only its "as of" line would, so a rebuild that changes nothing leaves the file (and a git diff of
 // it) alone, also a day or a commit later.
-const MAP_INPUTS = ['architecture.json', 'plan.json', 'names.json', 'targets.json', 'rules.json', 'schedules.json', 'layers.json', 'custom-flows.json'];
+const MAP_INPUTS = ['architecture.json', 'plan.json', 'names.json', 'targets.json', 'rules.json', 'schedules.json', 'layers.json', 'custom-flows.json', 'health-dismissed.json'];
 const mapFile = path.join(outDir, 'MAP.md');
 let mapNote;
 try {

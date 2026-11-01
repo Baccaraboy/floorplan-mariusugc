@@ -1020,6 +1020,7 @@
   "map.note": "Note",
   "map.affected": "Affected",
   "map.none": "None.",
+  "map.dismissed": "marked as not a problem",
   "map.more": "… and {n} more",
   "map.updated": "Updated: {date}",
 

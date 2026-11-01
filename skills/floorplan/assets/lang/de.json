@@ -1020,6 +1020,7 @@
   "map.note": "Hinweis",
   "map.affected": "Betroffen",
   "map.none": "Keine.",
+  "map.dismissed": "als kein Problem markiert",
   "map.more": "… und {n} weitere",
   "map.updated": "Aktualisiert: {date}",
 

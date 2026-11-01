@@ -80,7 +80,7 @@ Sometimes the map's inputs belong in the repo: so a fresh clone, or an AI worker
 ```
 
 - **`floorplan/.gitignore`** then ignores only what a build writes again: `index.html`, `graph.json`, `artifact.html`, `query.mjs`, `serve.mjs`, `recent-work.json`, `.cache/` and exported `*-map.html` copies, plus `ops.json`, which your tooling rewrites with every run. It no longer ignores itself.
-- **What can be committed:** `architecture.json`, `descriptions/`, `names.json`, `targets.json`, `rules.json`, `schedules.json`, `layers.json`, `plan.json`, `custom-flows.json`, `.gitignore` and `MAP.md`. Floorplan never commits anything: after a build, you (or the session that owns the repo) do.
+- **What can be committed:** `architecture.json`, `descriptions/`, `names.json`, `targets.json`, `rules.json`, `schedules.json`, `layers.json`, `plan.json`, `custom-flows.json`, `health-dismissed.json`, `.gitignore` and `MAP.md`. Floorplan never commits anything: after a build, you (or the session that owns the repo) do.
 - **`MAP.md`** is the map as text, whatever `git` says. It's written again only when its text changes (the `As of` line doesn't count), so a committed copy changes when the map does, not on every build. A worker reads it first and changes the inputs, never that file. Its format is in [schema.md](../skills/floorplan/references/schema.md#mapmd).
 - **A fresh clone** has the inputs and `MAP.md`, but no map yet. `status.mjs` says so, and `refresh.mjs` scans the code and builds one from the inputs (a blueprint is redrawn from `plan.json`).
 - **The note in `CLAUDE.local.md`**, if you have one, then starts with a paragraph that points to `MAP.md`.
@@ -88,4 +88,4 @@ Sometimes the map's inputs belong in the repo: so a fresh clone, or an AI worker
 - **A rule from outside the folder** (a `.gitignore` above it, `.git/info/exclude`) that ignores `MAP.md` keeps the inputs out of git. The build warns and names the command that finds the rule: `git check-ignore -v floorplan/MAP.md`.
 - **Going back:** set `"git": "none"` (or remove the field) and build. The folder ignores itself again; what you committed stays tracked until you run `git rm -r --cached floorplan`.
 
-The inputs are descriptions an AI wrote from your code, and `MAP.md` repeats them. They don't hold secrets or code, but they do hold your file paths and names, so read them before you push a repo that others can see. See [Is it safe?](is-it-safe.md) and [Privacy & security](privacy-and-security.md).
+The inputs are descriptions an AI wrote from your code, and `MAP.md` repeats them. They don't hold secrets or code, but they do hold your file paths and names, and `health-dismissed.json` holds the reasons you gave for **Not a problem** (`MAP.md` leaves them out), so read them before you push a repo that others can see. See [Is it safe?](is-it-safe.md) and [Privacy & security](privacy-and-security.md).
