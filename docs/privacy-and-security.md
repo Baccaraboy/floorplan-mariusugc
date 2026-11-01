@@ -74,7 +74,9 @@ The check is a helpful first pass, not a security audit.
 
 ## Git
 
-Nothing Floorplan creates is committed. See [What's in your project](project-files.md#staying-out-of-git).
+By default nothing Floorplan creates is committed. See [What's in your project](project-files.md#staying-out-of-git).
+
+A project can choose to keep the map's inputs in git (`"git": "inputs"` in `architecture.json`, [how](project-files.md#keeping-the-inputs-in-git)). Floorplan still never commits anything itself; it only stops ignoring the inputs and `MAP.md`. Those hold the names and one-sentence descriptions an AI wrote about your code, your file paths, and the title and number of each Health finding (a title can name a file, a table or a variable, never a secret's value or a line of code; where the findings are stays in `graph.json`, which is ignored). Read them before you push to a repository others can see: the private-word check looks at your code, not at these files.
 
 ## Reporting a vulnerability
 

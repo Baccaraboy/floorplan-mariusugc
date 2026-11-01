@@ -65,11 +65,13 @@ test('German explains the words in German, with the term the code uses in bracke
 
 const VIEWER = path.join(SKILL, 'assets', 'viewer.html');
 const UI = fs.readdirSync(path.join(SKILL, 'assets', 'ui')).filter((n) => n.endsWith('.js')).sort().map((n) => path.join(SKILL, 'assets', 'ui', n));
-const sources = () => [VIEWER, ...UI].map((f) => ({ file: path.relative(SKILL, f).replace(/\\/g, '/'), text: fs.readFileSync(f, 'utf8') }));
+// MAP.md, the map as text, takes its headings and labels from the same table, in the build
+const MAP_MD = path.join(SKILL, 'scripts', 'lib', 'mapmd.mjs');
+const sources = () => [VIEWER, ...UI, MAP_MD].map((f) => ({ file: path.relative(SKILL, f).replace(/\\/g, '/'), text: fs.readFileSync(f, 'utf8') }));
 // keys built at run time from a prefix (kind.service, conn.plain.http, systems.apps.label, glossary.api.term, …)
 const DYNAMIC = ['kind.', 'conn.plain.', 'conn.tech.', 'systems.', 'glossary.', 'lang.'];
 
-test('every key the page uses is in en.json, and every key in en.json is used', () => {
+test('every key the page and MAP.md use is in en.json, and every key in en.json is used', () => {
   const used = new Set();
   for (const { file, text } of sources()) {
     const calls = [...text.matchAll(/\b(?:t|tn)\(\s*'([\w.-]+)'/g), ...text.matchAll(/\{\{t:([\w.-]+)\}\}/g)].map((m) => m[1]);
@@ -162,7 +164,7 @@ const ALLOWED = {
   'Shortest chain of imports/HTTP calls from anything inside one item to anything inside another. Returns hops with ids.': 'a tool description for Claude in the Claude app, not shown',
 };
 
-test('no visible words are written straight into viewer.html or ui/*.js: they go through t()', () => {
+test('no visible words are written straight into viewer.html, ui/*.js or MAP.md\'s writer: they go through t()', () => {
   const left = [];
   for (const { file, text } of sources()) {
     const scripts = file.endsWith('.html') ? [...text.matchAll(/<script>([\s\S]*?)<\/script>/g)].map((m) => m[1]) : [text];

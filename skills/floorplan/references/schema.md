@@ -2,7 +2,7 @@
 
 `floorplan/architecture.json` describes the structure: subsystems, modules, external services, flows. Names and descriptions for individual files and routes go in `floorplan/descriptions/*.json` instead (see [writing-descriptions.md](writing-descriptions.md)). They're kept separate so parallel agents can write them without conflicts. `build.mjs` checks both against the scan and reports problems by field.
 
-Contents: [Top level](#top-level) · [nodes](#nodes) · [Assignment rules](#how-files-get-assigned) · [edges](#edges) · [annotations](#annotations) · [flows](#flows) · [Recent work](#recent-work) · [Fixed names](#fixed-names) · [Targets](#targets) · [Layers](#layers) · [Full example](#full-example)
+Contents: [Top level](#top-level) · [nodes](#nodes) · [Assignment rules](#how-files-get-assigned) · [edges](#edges) · [annotations](#annotations) · [flows](#flows) · [Recent work](#recent-work) · [Fixed names](#fixed-names) · [Targets](#targets) · [Layers](#layers) · [git](#git) · [Full example](#full-example)
 
 ## Top level
 
@@ -17,6 +17,7 @@ Contents: [Top level](#top-level) · [nodes](#nodes) · [Assignment rules](#how-
 | `tour` | array | no | the "Start here" tour shown on first open: 3–8 stops `{ "node": "<node id or file path>", "title": "…", "note": "…" }`, in plain language, in the order a newcomer should see them. The first flow is appended automatically |
 | `audience` | `"everyone"` \| `"developers"` | no | who names and descriptions are written for. Default `"everyone"`: plain language a non-technical owner understands (what it does for the business, in everyday words). `"developers"`: technical style for engineers |
 | `lang` | `"en"` \| `"de"` | no | the language of the map's own words (buttons, panels, the glossary), one of the tables in `assets/lang/`. Default `"en"`. Write names, descriptions, flows, the tour and recent work in it too. `build.mjs --lang <code>` overrides it for one build |
+| `git` | `"none"` \| `"inputs"` | no | whether the map's files may go in git. Default `"none"`: `floorplan/` ignores itself completely. `"inputs"`: it ignores only what a build writes again, so the inputs and `MAP.md` can be committed ([below](#git)) |
 | `include` | string[] | no | file categories to map. Default `["code"]`. Others: `config`, `docs` |
 | `ignore` | string[] | no | globs for files to leave off the board entirely (generated code, vendored libs, fixtures) |
 
@@ -249,6 +250,30 @@ Tests and fixtures are left out of all but the private words: their ids and addr
 ### The private word list
 
 A plain text file with one word or name per line; lines starting with `#` are skipped, and entries under two characters are left out (they would match almost anywhere). It belongs outside the repo, for example in your home folder, and is never committed: the build reads it, finds the words, and writes only their first letter and where they are, never the words, nor the list's path. If the file isn't there, the build says so and skips that check. If it's inside the project and git doesn't ignore it, the build warns.
+
+## git
+
+`"git"` in architecture.json says whether the map's files may go in git. Every script that writes the folder reads it and rewrites the folder's own `.gitignore` to match, so the mode lives in architecture.json, not in that file.
+
+- **`"none"`** (the default, and what a missing field means): the `.gitignore` in `floorplan/` ignores everything in the folder, itself included. Nothing of the map is ever committed, and `git status` doesn't show the folder.
+- **`"inputs"`**: the `.gitignore` ignores only what a build writes again: `index.html`, `graph.json`, `artifact.html`, `query.mjs`, `serve.mjs`, `recent-work.json`, `.cache/` and an exported `<project>-map.html`. What is left can be committed: `architecture.json`, `plan.json`, `names.json`, `targets.json`, `layers.json`, `custom-flows.json`, `descriptions/`, `MAP.md` and the `.gitignore` itself. Floorplan only reads and writes files; it never commits anything.
+
+Any other value is an error with a "did you mean …". When git already tracks files that the folder now ignores, the build prints the `git rm --cached` command that untracks them. If a rule from outside the folder (a `.gitignore` above it, `.git/info/exclude`) ignores `MAP.md`, the build warns that the inputs can't be committed.
+
+### MAP.md
+
+Every build writes `floorplan/MAP.md`, whatever `git` says: the map as plain text for AI workers that start in the repo. It is written in the map's language (`lang`), and in at most 1,500 lines: where a list would take it over, the list ends in "… and N more". It is written again only when its text changes, not when only the `As of` line would, so a committed copy changes when the map does and not on every build. The file says at its top that it is generated: edit the inputs, not this file.
+
+| part | what it holds |
+|---|---|
+| head | the project name and summary, the day and commit it was last written at (`As of`), the language, the numbers (parts, files, connections), the Health sum, and the inputs in the folder |
+| `## Parts` | per part, in tree order: its description, kind and size in files, path patterns, layer (with `layers.json`), the part it is in and the parts inside it, the targets it writes and reads, its key files (up to 12, the most connected first, each with its name and one sentence) and its endpoints |
+| `## Targets` | per target: kind, policy, writers, readers, the note, calls the Health check found that targets.json doesn't list; a target with more writers than its policy allows is marked |
+| `## Flows` | per flow: its description and numbered steps |
+| `## Health` | one line per finding: severity, title and the number of places. Never a place, a line or a value |
+| `## Recent work` | the tasks of `recent-work.json` and the cards each one touched |
+
+Each section has a marker right above its heading (`<!-- floorplan:parts -->`, `targets`, `flows`, `health`, `recent`), so a program finds it whatever the language. A section with nothing in it says "None.". Text from the code or from people is cut to one line, so it can't add a heading or a marker of its own.
 
 ## Full example
 

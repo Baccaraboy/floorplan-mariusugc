@@ -65,7 +65,8 @@ By default everything is written for the app's owner, not an engineer: what each
 - with a `layers.json`, sorts every file into the system, the setup and the content, and checks what would keep the system from being published;
 - runs the **Health** check;
 - detects **screens**: Next.js, React Router, Vue, SvelteKit, Remix, Nuxt, Astro, Expo, Angular, TanStack;
-- writes `graph.json` and the self-contained `index.html`, noting whether Claude Code or Codex made it, so the map's Ask bar and fix prompts name the right one.
+- writes `graph.json` and the self-contained `index.html`, noting whether Claude Code or Codex made it, so the map's Ask bar and fix prompts name the right one;
+- writes `MAP.md`, the same map as plain text for AI workers that start in the repo, and, if the project sets `"git": "inputs"`, keeps the folder's `.gitignore` to ignore only what a build writes again, so the inputs and `MAP.md` can be committed ([how](project-files.md#keeping-the-inputs-in-git)).
 
 The map lays itself out in your browser with [ELK](https://eclipse.dev/elk/), so the build itself is fast.
 

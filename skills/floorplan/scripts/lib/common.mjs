@@ -101,20 +101,50 @@ export const MAP_DIR = 'floorplan';
 export const LEGACY_MAP_DIR = 'show-code';
 /** True for a folder holding a map, so a project's own folder that happens to be called "floorplan" isn't taken for one. */
 export const isMapDir = (d) => ['architecture.json', 'plan.json', 'graph.json', '.cache'].some((f) => fs.existsSync(path.join(d, f)));
+/** Where the map's own files may go in git: "none" keeps the whole folder out of it (the default), "inputs" only what a build writes again. */
+export const GIT_MODES = ['none', 'inputs'];
+/** What a build writes again each time, so it can always be made from the rest: ignored with "git": "inputs". An export is <project>-map.html. */
+const REGENERATED = ['.cache/', 'index.html', 'graph.json', 'artifact.html', 'query.mjs', 'serve.mjs', 'recent-work.json', '*-map.html'];
+const isRegenerated = (f) => f.startsWith('.cache/') || /^(index\.html|graph\.json|artifact\.html|query\.mjs|serve\.mjs|recent-work\.json|[^/]*-map\.html)$/.test(f);
+/** The git mode a map folder asks for ("git" in its architecture.json): "none" unless it says "inputs". Build reports a wrong value. */
+export function gitModeOf(dir) {
+  try {
+    const mode = JSON.parse(fs.readFileSync(path.join(dir, 'architecture.json'), 'utf8'))?.git;
+    return GIT_MODES.includes(mode) ? mode : 'none';
+  } catch { return 'none'; }
+}
 /**
  * Keeps the map folder out of git: its own .gitignore ignores everything in it, itself included, so
- * nothing in the project's tracked files changes. Returns a warning when git already tracks files
- * there (ignoring doesn't untrack them), else null.
+ * nothing in the project's tracked files changes. With "git": "inputs" it ignores only what a build writes
+ * again, so the inputs (architecture.json, names.json, descriptions/ …), MAP.md and the .gitignore itself can be
+ * committed. Every script that writes the folder calls this, so the mode is read from architecture.json and
+ * no script flips it. Returns a warning when git already tracks files that it now ignores (ignoring doesn't
+ * untrack them), or when a rule outside the folder keeps the inputs out of git; else null.
  */
-export function keepOutOfGit(dir) {
+export function keepOutOfGit(dir, mode = gitModeOf(dir)) {
   const gi = path.join(dir, '.gitignore');
-  const want = '# Floorplan keeps its map out of git: this ignores everything in this folder, this file included.\n*\n';
+  const inputs = mode === 'inputs';
+  const want = inputs
+    ? `# Floorplan ("git": "inputs"): this ignores only what a build writes again, so the rest of this folder\n# (architecture.json, names.json, descriptions/, MAP.md and so on) and this file can be committed.\n${REGENERATED.map((g) => '/' + g).join('\n')}\n`
+    : '# Floorplan keeps its map out of git: this ignores everything in this folder, this file included.\n*\n';
   fs.mkdirSync(dir, { recursive: true });
   try { if (!fs.existsSync(gi) || fs.readFileSync(gi, 'utf8') !== want) fs.writeFileSync(gi, want); } catch {}
-  const tracked = (git(dir, ['ls-files', '--', '.']) || '').split('\n').filter(Boolean);
-  if (!tracked.length) return null;
   const rel = path.basename(dir);
-  return `${tracked.length} file(s) in ${rel}/ were committed to git before; they stay tracked until you run: git rm -r --cached ${rel}  (this keeps the files on disk)`;
+  const tracked = (git(dir, ['ls-files', '--', '.']) || '').split('\n').filter(Boolean);
+  if (!inputs) {
+    if (!tracked.length) return null;
+    return `${tracked.length} file(s) in ${rel}/ were committed to git before; they stay tracked until you run: git rm -r --cached ${rel}  (this keeps the files on disk)`;
+  }
+  const warnings = [];
+  const generated = tracked.filter(isRegenerated);
+  if (generated.length) {
+    const cached = generated.some((f) => f.startsWith('.cache/'));
+    const paths = [...new Set(generated.map((f) => (f.startsWith('.cache/') ? '.cache' : f)))];
+    warnings.push(`${generated.length} generated file(s) in ${rel}/ are tracked by git; they stay tracked until you run: git rm ${cached ? '-r ' : ''}--cached ${paths.map((f) => `${rel}/${f}`).join(' ')}  (this keeps the files on disk)`);
+  }
+  // this folder's own .gitignore leaves MAP.md alone, so if git ignores it, a rule from outside does
+  if (git(dir, ['check-ignore', '-q', '--', 'MAP.md']) !== null) warnings.push(`"git": "inputs" is set, but a rule outside ${rel}/ (a .gitignore or .git/info/exclude) ignores it, so its inputs can't be committed. Find the rule with: git check-ignore -v ${rel}/MAP.md`);
+  return warnings.length ? warnings.join(' ') : null;
 }
 
 /** The map folder for a codebase root. Moves an old show-code/ map into place unless migrate is false. */

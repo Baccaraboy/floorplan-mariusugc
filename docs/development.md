@@ -24,12 +24,12 @@ skills/floorplan/
     status.mjs     is there a map, and how stale is it (runs when the skill loads)
     scan.mjs       repos, files, imports, endpoints, requests → .cache/scan.json
     plan.mjs       a blueprint's plan.json → the same .cache/scan.json
-    build.mjs      validate, assign files, connect, Health, screens → graph.json + index.html
+    build.mjs      validate, assign files, connect, Health, screens → graph.json + index.html + MAP.md
     describe.mjs   worksheets for Claude to name and describe files and endpoints
     refresh.mjs    incremental update: re-scan, carry over, flag changes, rebuild
     recent.mjs     facts for marking recent work
     open.mjs       start or reuse the map's server, and open the browser
-    lib/           extraction, import resolution, route matching, Health, layers and what keeps code from being published, screens, which agent is running, helpers
+    lib/           extraction, import resolution, route matching, Health, layers and what keeps code from being published, screens, MAP.md (the map as text), which agent is running, helpers
   assets/
     viewer.html    the map (template the build fills in)
     ui/            viewer extensions: Theme button, blueprints, glossary, Health, recent work, screens, targets, layers, tour, waitlist card
@@ -95,6 +95,7 @@ The tests use Node's built-in test runner, so there's nothing to install (`npm t
 | `phone.test.mjs` | phone and tablet layout: the top bar wraps instead of overflowing, icon-only buttons keep a name, 44 px touch targets, the details sheet that opens when a box is tapped, the zoom buttons in the top row, the folding description and the AI-tool note shown only while asking (checks on the built page, not a real screen) |
 | `ask.test.mjs` | asking through Claude Code or Codex: which one is used, read-only, follow-ups, sign-in errors (stand-in CLIs in `fixtures/fake-cli/`) |
 | `agents.test.mjs` | telling Claude Code from Codex, and what a map built by each records and writes |
+| `map-md.test.mjs` | MAP.md, the map as text for AI workers: its fixed sections and head, the parts with key files and endpoints, targets, flows and recent work, Health as titles and counts without places or values, English and German, the 1,500-line limit however big the map is, text from the code that can't add structure, a build that changes nothing leaves the file alone; and `"git": "inputs"`: the folder's `.gitignore` per mode (byte-identical without the field), what git shows, a fresh clone with status.mjs and refresh.mjs, and the pointer in `CLAUDE.local.md` |
 | `release.test.mjs` | the version agrees across both plugins' `plugin.json`, the README badge, the changelog and `CHECKSUMS.txt` |
 | `supply-chain.test.mjs` | what the plugin can do stays what [Is it safe to install?](is-it-safe.md) says: no hooks, MCP servers or dependencies, one outbound request, a fixed list of programs and pre-approved scripts, no code loaded at run time, the vendored layout engine unchanged |
 | `touch.test.mjs` | touch gestures: a drag follows one finger and ends on a cancelled touch, two-finger pinch and pan, nothing re-fits the map mid-gesture (checks on the built page, not a real screen) |

@@ -6,7 +6,7 @@
 | [Floorplan in Codex](codex.md) | Installing and using Floorplan in Codex, and what's different from Claude Code |
 | [Using the map](using-the-map.md) | Every button, view, panel, shortcut and right-click menu, and what a blueprint adds |
 | [How it works](how-it-works.md) | The pipeline from scan to map, how connections are found, how updates stay cheap, how blueprints are drawn and changed |
-| [What's in your project](project-files.md) | Every file Floorplan creates, which ones you can edit, and how it stays out of git |
+| [What's in your project](project-files.md) | Every file Floorplan creates, which ones you can edit, how it stays out of git, and how to keep the inputs in it |
 | [Privacy and security](privacy-and-security.md) | What runs where, what leaves your machine, and how secrets are handled |
 | [Is it safe to install?](is-it-safe.md) | Everything Floorplan does on your computer, how a test enforces it, and how to verify your installed copy |
 | [Troubleshooting](troubleshooting.md) | Common problems and how to fix them |

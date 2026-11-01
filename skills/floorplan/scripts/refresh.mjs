@@ -10,7 +10,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { compileGlob, parseArgs, mapDir } from './lib/common.mjs';
+import { compileGlob, parseArgs, mapDir, gitModeOf } from './lib/common.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const args = parseArgs(process.argv.slice(2));
@@ -18,21 +18,43 @@ const root = path.resolve(args._[0] || '.');
 const outDir = mapDir(root);
 const graphFile = path.join(outDir, 'graph.json');
 const archFile = path.join(outDir, 'architecture.json');
-if (!fs.existsSync(graphFile) || !fs.existsSync(archFile)) {
+// "git": "inputs" commits the inputs (and MAP.md) and not the map, so a fresh clone has architecture.json, and plan.json
+// for a blueprint, but no graph.json. There is no earlier map to compare with, and nothing to carry over either.
+const fresh = !fs.existsSync(graphFile) && fs.existsSync(archFile) && gitModeOf(outDir) === 'inputs';
+if (!fresh && (!fs.existsSync(graphFile) || !fs.existsSync(archFile))) {
   console.log('No existing map here (floorplan/graph.json + architecture.json). Do a full run instead.');
   process.exit(0);
 }
-const old = JSON.parse(fs.readFileSync(graphFile, 'utf8'));
+const old = fresh ? null : JSON.parse(fs.readFileSync(graphFile, 'utf8'));
 const arch = JSON.parse(fs.readFileSync(archFile, 'utf8'));
+const run = (script, ...rest) => execFileSync(process.execPath, [path.join(HERE, script), root, ...rest], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'inherit'] });
 
 // A blueprint is redrawn from plan.json, not from code. --from-code maps the real code instead
 // (plan.json is kept, so the blueprint can be drawn again with plan.mjs + build.mjs).
-if (old.meta?.blueprint && !args['from-code']) {
-  const run = (script, ...rest) => execFileSync(process.execPath, [path.join(HERE, script), root, ...rest], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'inherit'] });
+if ((fresh ? fs.existsSync(path.join(outDir, 'plan.json')) : old.meta?.blueprint) && !args['from-code']) {
   try {
     process.stdout.write(run('plan.mjs') + '\n' + run('build.mjs', ...process.argv.slice(2).filter((a) => a.startsWith('--'))));
   } catch (e) { process.stdout.write(String(e.stdout || '')); process.exit(1); }
   console.log('\nNEXT  This map is a blueprint, redrawn from floorplan/plan.json. Edit plan.json and architecture.json to change the plan. Once the code exists, run refresh.mjs --from-code for a map of the real code; plan.json stays.');
+  process.exit(0);
+}
+
+// A fresh clone: scan and build from the committed inputs, and report what the build left for Claude to look at.
+if (fresh) {
+  run('scan.mjs');
+  let out = '', ok = true;
+  try { out = run('build.mjs'); } catch (e) { out = String(e.stdout || '') + String(e.stderr || ''); ok = false; }
+  const L = ['Floorplan refresh — no earlier map to compare with (a fresh clone with "git": "inputs"): scanned the code and built the map from the inputs in floorplan/.'];
+  L.push('', 'BUILD');
+  L.push(out.split('\n').filter((l) => /^(✗|!|  - |ASSIGNMENT|  unassigned|    |DESCRIPTIONS|  Run describe|✓)/.test(l)).slice(0, 40).join('\n'));
+  L.push('', 'NEXT');
+  const todo = [];
+  if (!ok) todo.push('Fix the build errors above in architecture.json (usually a flow step or annotation pointing at a deleted file), then run build.mjs.');
+  if (/unassigned, by directory/.test(out)) todo.push('Files landed outside every node: add globs (or a node) in architecture.json for the directories listed under "unassigned", then run build.mjs.');
+  if (/Run describe/.test(out)) todo.push('Run describe.mjs: it writes worksheets for the files and endpoints without a description. Fill them in, then run build.mjs.');
+  if (!todo.length) todo.push('Nothing is left over: the map is built from the committed inputs, and floorplan/MAP.md should match the committed one.');
+  todo.forEach((t, i) => L.push(`  ${i + 1}. ${t}`));
+  console.log(L.join('\n'));
   process.exit(0);
 }
 
