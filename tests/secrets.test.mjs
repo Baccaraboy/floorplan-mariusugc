@@ -1,6 +1,7 @@
 // Health's secret check: it finds keys and passwords written into code, records only where they are
-// and a masked hint, and never keeps the value itself. Secret-looking test values are assembled at
-// runtime so none is ever committed to this repo.
+// and a masked hint (its length and first characters, as data the build puts into words), and never
+// keeps the value itself. Secret-looking test values are assembled at runtime so none is ever
+// committed to this repo.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { lib, FAKE_PASSWORD } from './helpers.mjs';
@@ -15,13 +16,13 @@ test('a hard-coded password is found, with its line, and masked', () => {
   assert.equal(s.line, 2);
   assert.equal(s.name, 'DB_PASSWORD');
   assert.equal(s.sev, 'high');
-  assert.equal(s.hint, `${FAKE_PASSWORD.length} characters`, 'a password hint gives only its length');
+  assert.deepEqual(s.hint, { len: FAKE_PASSWORD.length }, 'a password hint gives only its length (the build puts it into words)');
 });
 
 test('a known key format is named after its service and shows only its first characters', () => {
   const [s] = secrets(`token = "${FAKE_GITHUB_TOKEN}"`);
   assert.equal(s.svc, 'GitHub');
-  assert.match(s.hint, /^starts “ghp_…”, \d+ characters$/);
+  assert.deepEqual(s.hint, { start: 'ghp_', len: FAKE_GITHUB_TOKEN.length }, 'the hint has only its first four characters and its length');
 });
 
 test('the secret value never appears in what Health records', () => {

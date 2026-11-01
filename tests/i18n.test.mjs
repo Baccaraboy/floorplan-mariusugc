@@ -70,16 +70,21 @@ const MAP_MD = path.join(SKILL, 'scripts', 'lib', 'mapmd.mjs');
 // so does the build when it puts a schedule's cron into words ("daily at 02:30"), which the page and MAP.md then show
 const CRON_TEXT = path.join(SKILL, 'scripts', 'lib', 'cron-text.mjs');
 const sources = () => [VIEWER, ...UI, MAP_MD, CRON_TEXT].map((f) => ({ file: path.relative(SKILL, f).replace(/\\/g, '/'), text: fs.readFileSync(f, 'utf8') }));
-// keys built at run time from a prefix (kind.service, conn.plain.http, systems.apps.label, glossary.api.term, …)
-const DYNAMIC = ['kind.', 'conn.plain.', 'conn.tech.', 'systems.', 'glossary.', 'lang.'];
+// and when it writes the Health findings (their titles, explanations and notes; the fix requests stay English prose)
+const HEALTH = ['health.mjs', 'blueprint.mjs'].map((n) => path.join(SKILL, 'scripts', 'lib', n));
+const healthSources = () => HEALTH.map((f) => ({ file: path.relative(SKILL, f).replace(/\\/g, '/'), text: fs.readFileSync(f, 'utf8') }));
+// keys built at run time from a prefix (kind.service, conn.plain.http, systems.apps.label, glossary.api.term, the kind
+// of a secret, a CORS form, what a Publishability finding found, …)
+const DYNAMIC = ['kind.', 'conn.plain.', 'conn.tech.', 'systems.', 'glossary.', 'lang.', 'health.secret.kind.', 'health.cors.how.', 'health.publish.what.'];
 
-test('every key the page and MAP.md use is in en.json, and every key in en.json is used', () => {
+test('every key the page, MAP.md and the Health findings use is in en.json, and every key in en.json is used', () => {
   const used = new Set();
-  for (const { file, text } of sources()) {
+  for (const { file, text } of [...sources(), ...healthSources()]) {
     const calls = [...text.matchAll(/\b(?:t|tn)\(\s*'([\w.-]+)'/g), ...text.matchAll(/\{\{t:([\w.-]+)\}\}/g)].map((m) => m[1]);
     for (const k of calls) assert.ok(k in en || `${k}.other` in en, `${file} uses "${k}", which en.json doesn't have`);
-    // any quoted key counts as used (keys picked by a condition, like t(PLAN ? 'health.review' : 'health.check'))
-    for (const m of text.matchAll(/'([\w.-]+)'/g)) if (m[1] in en) used.add(m[1]);
+    // any quoted key counts as used (keys picked by a condition, like t(PLAN ? 'health.review' : 'health.check')),
+    // with its plural forms (tn(setup ? 'health.publish.private-word.title.config' : '…system', n))
+    for (const m of text.matchAll(/'([\w.-]+)'/g)) for (const k of [m[1], `${m[1]}.one`, `${m[1]}.other`]) if (k in en) used.add(k);
     for (const k of calls) { used.add(k); used.add(`${k}.one`); used.add(`${k}.other`); }
   }
   for (const k of ['app.title', 'unassigned.label', 'unassigned.summary']) used.add(k); // build.mjs
@@ -178,6 +183,35 @@ test('no visible words are written straight into viewer.html, ui/*.js or MAP.md\
   assert.equal(visibleText('x.innerHTML = `<div class="lh">Show connections</div>`;').length, 1);
   assert.equal(visibleText('x.innerHTML = `<div class="more">+${n} more</div>`;').length, 1);
   assert.equal(visibleText("x.innerHTML = `<div>${t('legend.title')}</div>`; const k = 'legend.title';").length, 0);
+});
+
+test('the Health findings take their titles, explanations and notes from the table too, and the scan records keys, not words', () => {
+  // the literals on a line, each without its ${…} parts: words in one of them mean text written in instead of a key
+  const prose = (s) => [...s.matchAll(/(['"`])((?:\\.|(?!\1)[^\\\n])*)\1/g)].map((m) => m[2].replace(/\$\{[^}]*\}/g, '')).filter((x) => /[A-Za-z]{2,}[ ’'][A-Za-z]/.test(x));
+  const check = (text, file = '') => {
+    const out = [];
+    text.split('\n').forEach((line, i) => {
+      // a title, an explanation or a note written in as text, instead of t()/tn() over the table
+      const at = line.search(/\b(title|detail)\s*:|\bnotes?\b|noted\.get\(/);
+      if (at < 0) return;
+      for (const p of prose(line.slice(at))) out.push(`${file}:${i + 1}: "${p.trim().slice(0, 50)}" is written in`);
+    });
+    return out;
+  };
+  const left = healthSources().flatMap(({ file, text }) => check(text, file));
+  // what the scan records about a secret, a CORS form or a Publishability find is a key of the table, never words
+  for (const name of ['health.mjs', 'layers.mjs']) {
+    const text = fs.readFileSync(path.join(SKILL, 'scripts', 'lib', name), 'utf8');
+    for (const m of text.matchAll(/\bwhat:\s*'([^']*)'/g)) if (/\s/.test(m[1])) left.push(`${name}: what: '${m[1]}' is words, not a key`);
+  }
+  assert.deepEqual(left, [], 'put these in assets/lang/en.json (and every other table) under health.<check>.* and use t()/tn()');
+  // the check itself finds what it should
+  assert.equal(healthSources().length, 2);
+  assert.equal(check("title: n === 1 ? 'One file is very large' : `${n} files are very large`,").length, 2);
+  assert.equal(check("detail: `${file} has ${parts} with no login check.`,").length, 1);
+  assert.equal(check("notes: Object.fromEntries(list.map((f) => ['f:' + f.p, 'Nothing uses this file'])),").length, 1);
+  assert.equal(check("title: tn('health.large-files.title', n), detail: `${has('health.x.has', what)} ${t('health.x.detail')}`,").length, 0);
+  assert.equal(check("notes: Object.fromEntries(list.map((f) => ['f:' + f.p, t('health.unused.note', { lines })])),").length, 0);
 });
 
 test('the markup of viewer.html takes its words from the table too', () => {

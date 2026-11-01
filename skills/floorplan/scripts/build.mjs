@@ -1016,10 +1016,12 @@ const graph = {
   ...(outOps?.items.length ? { ops: outOps } : {}),
 };
 // extension hooks, computed from the finished graph plus the raw scan
-// a blueprint has no code to check, so its Health is a design review of the plan (computed after screens)
-if (!scan.blueprint) try { graph.health = buildHealth({ graph, scan, arch, root, layers }); } catch (e) { warn(`health check failed: ${e.message}`); graph.health = { issues: [] }; }
+// a blueprint has no code to check, so its Health is a design review of the plan (computed after screens).
+// Both write their titles, explanations and notes in the map's language (the health.* keys of the table); the fix
+// requests stay English, they are prompts for the agent.
+if (!scan.blueprint) try { graph.health = buildHealth({ graph, scan, arch, root, layers, words, lang }); } catch (e) { warn(`health check failed: ${e.message}`); graph.health = { issues: [] }; }
 try { graph.screens = buildScreens({ graph, scan, arch, root }); } catch (e) { warn(`screen detection failed: ${e.message}`); graph.screens = []; }
-if (scan.blueprint) try { graph.health = buildPlanHealth({ graph, scan }); } catch (e) { warn(`design review failed: ${e.message}`); graph.health = { issues: [] }; }
+if (scan.blueprint) try { graph.health = buildPlanHealth({ graph, scan, words, lang }); } catch (e) { warn(`design review failed: ${e.message}`); graph.health = { issues: [] }; }
 fs.mkdirSync(outDir, { recursive: true });
 const trackedWarning = keepOutOfGit(outDir, gitMode);
 fs.writeFileSync(path.join(outDir, 'graph.json'), JSON.stringify(graph, null, 0));
