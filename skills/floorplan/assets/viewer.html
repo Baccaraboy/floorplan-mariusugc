@@ -848,7 +848,7 @@ function buildAnswerView() {
     e.w += w; if (!e.links.includes(l)) e.links.push(l);
   };
   for (const l of G.links) {
-    if (!state.kinds[l.k]) continue;
+    if (!state.kinds[l.k] || l.drawn === false) continue;
     let srcs = proj(l.a), dsts = proj(l.b, l.names);
     if (!srcs.length && l.k === 'http' && l.a.startsWith('f:') && dsts.length) srcs = viaHidden(l.a);
     if (l.calls?.length) {
@@ -886,8 +886,10 @@ function buildView(container) {
   };
   const conn = (side, entity) => { const id = `x:${side}:${entity}`; if (!connectors.has(id)) connectors.set(id, { id, side, entity }); return id; };
 
+  // a link the build marked "drawn: false" (between two external nodes, which both sit in the last column, where the
+  // layout engine allows no edge between them) stays out of the board; the details panels still list it
   for (const l of G.links) {
-    if (!state.kinds[l.k]) continue;
+    if (!state.kinds[l.k] || l.drawn === false) continue;
     if (isFile) {
       const fid = container, f = files.get(fid.slice(2));
       if (l.b === fid && l.a !== fid) {

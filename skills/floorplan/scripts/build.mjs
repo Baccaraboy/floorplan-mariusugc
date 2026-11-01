@@ -180,6 +180,7 @@ const addLink = (a, b, k, extra = {}) => {
   if (extra.label) { l.labels = l.labels || []; if (!l.labels.includes(extra.label) && l.labels.length < 40) l.labels.push(extra.label); }
   if (extra.inferred) l.inferred = true;
   if (extra.desc) l.desc = extra.desc;
+  if (extra.drawn === false) l.drawn = false;
   if (extra.route !== undefined) { l.calls = l.calls || []; if (l.calls.length < 80) l.calls.push([extra.route, extra.callLine || 0]); }
 };
 
@@ -215,12 +216,19 @@ for (const e of scan.nodeLinks || []) {
   addLink(`f:${e.from}`, `n:${e.to}`, EDGE_KINDS.includes(e.kind) ? e.kind : 'call', { label: e.label });
 }
 
+// An edge between two external nodes is kept (it's true) but not drawn: the viewer puts every external node in the
+// last column of the layout, and the layout engine rejects an edge from one last-column node to another. The panels
+// still list it under both nodes.
+const isExternal = (ref) => ref.startsWith('n:') && byId.get(ref.slice(2))?.kind === 'external';
 archEdges.forEach((e, i) => {
   const where = `edges[${i}]`;
   if (!EDGE_KINDS.includes(e?.kind)) err(`${where}.kind "${e?.kind}" must be one of ${EDGE_KINDS.join(', ')}${didYouMean(String(e?.kind), EDGE_KINDS)}`);
   const a = resolveEndpoint(e?.from, `${where}.from`);
   const b = resolveEndpoint(e?.to, `${where}.to`);
-  if (a && b && EDGE_KINDS.includes(e.kind)) addLink(a, b, e.kind, { label: e.label, desc: e.description, w: 1 });
+  if (!a || !b || !EDGE_KINDS.includes(e.kind)) return;
+  const undrawn = isExternal(a) && isExternal(b);
+  if (undrawn) warn(`${where}: both ends are external nodes ("${e.from}" and "${e.to}"); shown in the panels, not drawn on the board`);
+  addLink(a, b, e.kind, { label: e.label, desc: e.description, w: 1, ...(undrawn ? { drawn: false } : {}) });
 });
 
 // ---------- flows + annotations ----------
