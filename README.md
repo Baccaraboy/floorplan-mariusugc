@@ -118,7 +118,7 @@ Updates re-read only what changed, and an open map reloads itself. Everything ru
 
 Plus guided **flows** you can request in plain words, a one-minute **Start here** tour, **Export** to send a copy to anyone as one HTML file, a layout for **phones and tablets** with drag and pinch, search, keyboard shortcuts, and right-click actions on every card.
 
-The map speaks English by default and **German** on request: ask for "the floorplan in German", or add `"lang": "de"` to `floorplan/architecture.json`, and the buttons, glossary and descriptions are all in German. More languages are one file each; see [Languages](docs/i18n.md).
+The map speaks English by default and **German** on request: ask for "the floorplan in German", or add `"lang": "de"` to `floorplan/architecture.json`, and the buttons, glossary, descriptions and Health findings are all in German. More languages are one file each; see [Languages](docs/i18n.md).
 
 **Who writes where:** list the databases, services and files your app writes to in `floorplan/targets.json`, with the parts that write to and read each one, and the map draws those writes and reads and gets a **Targets** panel. A target that should have one writer but has two turns red, with a fix in the Health check, which also points out calls the scan saw that the list leaves out ([format](skills/floorplan/references/schema.md#targets)).
 
