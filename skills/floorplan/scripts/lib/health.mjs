@@ -33,7 +33,7 @@ function entropy(s) {
 }
 
 // Files where keys are usually fake: tests, fixtures, examples, docs.
-const TEST_FILE = /(^|\/)(tests?|__tests__|__mocks__|spec|specs|e2e|fixtures?|testdata|mocks?)\/|\.(test|spec|stories)\.[a-z]+$|(^|\/)test_[^/]*\.py$|_test\.(py|go)$|(^|\/)conftest\.py$/i;
+export const TEST_FILE = /(^|\/)(tests?|__tests__|__mocks__|spec|specs|e2e|fixtures?|testdata|mocks?)\/|\.(test|spec|stories)\.[a-z]+$|(^|\/)test_[^/]*\.py$|_test\.(py|go)$|(^|\/)conftest\.py$/i;
 const EXAMPLE_FILE = /(^|\/)(examples?|samples?|docs?|demo)\/|\.(example|sample|template|dist|tmpl)(\.|$)|(^|\/)[^/]*example[^/]*$/i;
 const PLACEHOLDER = /your|xxxx|example|changeme|change[-_]?me|placeholder|replace|dummy|fake|sample|redacted|insert|<[^>]*>|\$\{|\{\{|%\(|\*\*\*|0{8,}|1234567|abcdef|_here\b|-here\b/i;
 
@@ -1126,7 +1126,58 @@ export function buildHealth({ graph, scan, arch, root }) {
     });
   }
 
-  const KIND_ORDER = ['secret', 'public-env-secret', 'database-rules', 'stripe-webhook', 'env-file', 'unprotected-endpoint', 'cors', 'large-file', 'hardcoded-url', 'unused-file'];
+  // ---------- who writes where (graph.targets, from floorplan/targets.json) ----------
+  // A target that allows one writer only, with more than one listed, and calls into a target's box that the list
+  // doesn't mention. Only listed writers count, so the second finding is how a missing writer comes to light.
+  const itemName = (id) => (id.startsWith('n:') ? label(id.slice(2)) : nameOf(id.slice(2)));
+  const itemPath = (id) => (id.startsWith('n:') ? (nodeById.get(id.slice(2))?.paths || []).join(', ') || id.slice(2) : id.slice(2));
+  const and = (xs) => (xs.length < 2 ? xs.join('') : `${xs.slice(0, -1).join(', ')} and ${xs.at(-1)}`);
+  const entryName = (e) => (e.items.length === 1 ? itemName(e.items[0]) : `${e.ref} (${plural(e.items.length, 'match', 'matches')})`);
+  const targets = graph.targets || [];
+  for (const t of targets.filter((x) => x.conflict)) {
+    const writers = t.writers.filter((w) => !w.in);
+    const items = [...new Set(t.writers.flatMap((w) => w.items))];
+    const box = t.node ? label(t.node.slice(2)) : null;
+    issues.push({
+      id: 'single-writer:' + t.id, kind: 'single-writer', severity: 'high',
+      title: `${t.writerCount === 2 ? 'Two' : t.writerCount} writers for a single-writer target: ${t.name}`,
+      detail: `floorplan/targets.json says only one part may write to ${t.name}, but lists ${t.writerCount}: ${and(writers.map(entryName))}. Two writers can overwrite each other’s changes or disagree about what is true. Pick the one that owns ${t.name}, and have the others hand their changes to it.`,
+      items: [...items.slice(0, 23), ...(t.node ? [t.node] : [])],
+      notes: { ...Object.fromEntries(items.slice(0, 23).map((x) => [x, `Writes to ${t.name}`])), ...(t.node ? { [t.node]: `${t.name}: one writer allowed, ${t.writerCount} listed` } : {}) },
+      locations: [],
+      fix: [
+        `Single-writer check: floorplan/targets.json says only one part may write to the ${t.kind} "${t.name}"${box && box !== t.name ? ` (${box} on the map)` : ''}, but it lists ${t.writerCount} writers:`,
+        ...writers.map((w) => `- ${w.ref}: ${and(w.items.slice(0, 6).map((x) => `${itemName(x)} (${itemPath(x)})`))}${w.items.length > 6 ? ` and ${w.items.length - 6} more` : ''}`),
+        ``,
+        `For each of them, find where and what it writes to ${t.name}. Then propose which one should own all the writing, and how the others would hand their changes to it instead (for example by calling it). Show me the plan first, and don't change any code until I agree. If one of them doesn't really write there, say so, and I'll move it to "readers" in floorplan/targets.json.`,
+      ].join('\n'),
+    });
+  }
+  for (const node of new Set(targets.filter((x) => x.node && x.undeclared?.length).map((x) => x.node))) {
+    const t = targets.find((x) => x.node === node);
+    const ext = label(node.slice(2));
+    const names = targets.filter((x) => x.node === node).map((x) => x.name);
+    const parts = t.undeclared;
+    const calls = parts.flatMap((u) => u.calls.map((c) => ({ ...c, part: u.part })));
+    const how = { write: 'sends changes', read: 'reads', unknown: 'direction unknown' };
+    const notes = {};
+    for (const c of calls) { const k = 'f:' + c.file; notes[k] = (notes[k] ? notes[k] + ' · ' : '') + `${c.method ? `${c.method} request` : 'uses its package'} on line ${c.line}, not in targets.json`; }
+    issues.push({
+      id: 'undeclared-target-call:' + node, kind: 'undeclared-target-call', severity: 'low',
+      title: parts.length === 1 ? `Detected call from ${itemName(parts[0].part)} to ${ext} not declared as reader or writer` : `Detected calls from ${parts.length} parts to ${ext} not declared as readers or writers`,
+      detail: `The scan saw ${and(parts.map((u) => `${itemName(u.part)} (${how[u.dir] || how.unknown})`))} call ${ext}, but floorplan/targets.json doesn’t list ${parts.length === 1 ? 'it' : 'them'} as a writer or reader of ${and(names)}. Only the parts listed there are counted, so a writer missing from the list can break a one-writer rule without anyone noticing.`,
+      items: [...new Set(calls.map((c) => 'f:' + c.file))].slice(0, 23).concat(node),
+      notes, locations: calls.map((c) => ({ file: c.file, line: c.line })),
+      fix: [
+        `Targets check: the scan found these calls to ${ext}, from parts that floorplan/targets.json doesn't list as writers or readers of ${and(names.map((n) => `"${n}"`))}:`,
+        ...calls.map((c) => `- ${c.file}:${c.line}${c.method ? ` (${c.method})` : ' (imports its package)'}, in ${itemName(c.part)}`),
+        ``,
+        `For each one, read the code and tell me whether it writes to ${ext} (creates, changes or deletes something there) or only reads from it. Then add the part's id or the file's path to that target's "writers" or "readers" in floorplan/targets.json, and update the floorplan. If that gives a single-writer target a second writer, tell me instead of changing the code.`,
+      ].join('\n'),
+    });
+  }
+
+  const KIND_ORDER = ['secret', 'public-env-secret', 'database-rules', 'stripe-webhook', 'env-file', 'unprotected-endpoint', 'single-writer', 'cors', 'large-file', 'hardcoded-url', 'unused-file', 'undeclared-target-call'];
   issues.sort((a, b) => SEV_ORDER[a.severity] - SEV_ORDER[b.severity] || KIND_ORDER.indexOf(a.kind) - KIND_ORDER.indexOf(b.kind) || (b.locations?.length || 0) - (a.locations?.length || 0));
   const kept = issues.slice(0, 40);
   const summary = { high: 0, medium: 0, low: 0 };

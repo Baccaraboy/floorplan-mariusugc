@@ -91,6 +91,8 @@ The codebase root is the argument if one was given, otherwise the current direct
 
    **Fixed names.** If `floorplan/names.json` exists, its names (and any descriptions) are the owner's own words: the build applies them last, over architecture.json and descriptions, so use them as they are, in labels, flows, the tour and your report, and never reword or drop an entry. When you restructure, keep the node ids it names, or move its entries to the new ids. Format: [references/schema.md#fixed-names](references/schema.md#fixed-names).
 
+   **Who writes where (optional).** Write `floorplan/targets.json` when the user asks who writes where, or when the project itself documents which part may write to which database, service, file, API or queue: an architecture, ownership or service-map file, decision records, or a README section with a rule like "one writer per target". Start from what those documents say (the targets, their writers and the rule), then check it against the code: database clients and ORMs, SDK imports, web requests to a service's hosts, file writes. Give each target its `kind`, the external node that stands for it on the map (add one to architecture.json if it's missing), writers and readers as node ids or paths, and `"policy": "single-writer"` only where the project or the user states that rule (otherwise `"any"`). Don't add writers that neither the documents nor the code show, and don't quietly drop a listed one the code contradicts: say so in your report. The build's Health check then lists calls you left out. Format: [references/schema.md#targets](references/schema.md#targets).
+
    **Tour.** Add `"tour": [{ "node": "<node id or file path>", "title": "…", "note": "…" }]`, with stops in the order a newcomer should see them: what the app is, the apps people use, the main server, outside services, and ending on an important screen's file. Write titles and notes in plain words for someone who has never read the code. The first guided flow is added at the end automatically as "watch a real request". Without a tour, one is built from node summaries and the first flow, so good summaries and at least one flow matter.
 
 5. **Build and fix.**
@@ -169,10 +171,12 @@ It writes `floorplan/<project>-map.html` unless given a file. `--include` defaul
   - CORS that allows every website (worth fixing when credentials go along);
   - endpoints that let anyone change or read data without signing in (including a sign-in check placed above the route line);
   - files nothing uses;
-  - files over ~1,000 lines, which AI struggles to edit safely.
+  - files over ~1,000 lines, which AI struggles to edit safely;
+  - with `floorplan/targets.json`: a target that allows one writer but lists more (important), and calls into a target from parts the file doesn't list (minor).
 
   Each issue has **Show on map** (highlights the affected files and endpoints with notes) and **Fix with Claude** or **Fix with Codex** (a ready-to-paste prompt naming the exact files and lines and the safe fix). It's computed by `scripts/lib/health.mjs` during scan and build, and it never stores secret values, only the file, line and a masked hint. Treat it as a quick automatic check, not a security audit.
 - **Screens.** The build detects the app's screens (Next.js, React Router, Vue, SvelteKit, Remix, Nuxt, Astro, Expo, Angular, TanStack) with `scripts/lib/screens.mjs`. It also works out what sits behind each one: its components, the requests it makes, the server code and data that answer them, and outside services. A **Screens** button lets people start from the page they know.
+- **Targets.** With `floorplan/targets.json`, a **Targets** button lists each target with its writers and readers as tiles, write and read lines run from the parts to the target's box, and a one-writer target with more writers is red on the map.
 - **Start here.** A one-minute tour runs on first open and can be replayed from the header. It uses your `tour`, or builds one automatically.
 - **Plain words by default.** Connection types read "Uses", "Web requests", "Background jobs". Common technical terms are underlined and explained on hover. **Filters → Show technical detail** switches to developer terms and shows exports.
 

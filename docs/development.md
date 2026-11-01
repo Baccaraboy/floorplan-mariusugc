@@ -32,7 +32,7 @@ skills/floorplan/
     lib/           extraction, import resolution, route matching, Health, screens, which agent is running, helpers
   assets/
     viewer.html    the map (template the build fills in)
-    ui/            viewer extensions: Theme button, blueprints, glossary, Health, recent work, screens, tour, waitlist card
+    ui/            viewer extensions: Theme button, blueprints, glossary, Health, recent work, screens, targets, tour, waitlist card
     graph-query.js shared map lookups (viewer, query.mjs, Ask instructions)
     serve.mjs      copied into each project's floorplan/ folder; answers through Claude Code or Codex
     query-cli.mjs  becomes floorplan/query.mjs
@@ -86,6 +86,7 @@ The tests use Node's built-in test runner, so there's nothing to install (`npm t
 | `blueprint.test.mjs` | a map planned from a PRD before any code exists: plan.json errors, endpoints and calls, Screens, the design review, refreshing and switching to the real code (sample PRD in `fixtures/`) |
 | `blueprint-change.test.mjs` | changing a blueprint from the map: the agent's updated plan is checked, saved and highlighted, retried once when it fails the checks, and undone (stand-in CLI in `fixtures/fake-cli/`) |
 | `names.test.mjs` | fixed names from `names.json`: they win over architecture.json and descriptions, per language too, unknown entries are errors with a suggestion, describe.mjs leaves them alone, a refresh reports moves instead of making them, and nothing changes without the file |
+| `targets.test.mjs` | who writes where, from `targets.json`: the Targets panel's data, write and read lines from part to target, a one-writer target with two writers marked red with an important Health finding, calls the scan saw but the file doesn't list (direction from the HTTP method), mistakes as errors, the panel itself run against a stand-in map, and nothing changes without the file |
 | `large-files.test.mjs` | files over the scan's size limit stay on the map with their line count, and the scan, Health and the map say they weren't read |
 | `sample-app.test.mjs` | a whole map of a two-repo shop: endpoints, cross-repo requests, Health, offline map, no secret values written, updates |
 | `serve.test.mjs` | the map's server: 127.0.0.1 only, its own host names only, token and same-origin checks, nothing served from outside its folder |

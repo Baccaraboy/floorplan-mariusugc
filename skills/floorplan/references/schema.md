@@ -2,7 +2,7 @@
 
 `floorplan/architecture.json` describes the structure: subsystems, modules, external services, flows. Names and descriptions for individual files and routes go in `floorplan/descriptions/*.json` instead (see [writing-descriptions.md](writing-descriptions.md)). They're kept separate so parallel agents can write them without conflicts. `build.mjs` checks both against the scan and reports problems by field.
 
-Contents: [Top level](#top-level) · [nodes](#nodes) · [Assignment rules](#how-files-get-assigned) · [edges](#edges) · [annotations](#annotations) · [flows](#flows) · [Recent work](#recent-work) · [Fixed names](#fixed-names) · [Full example](#full-example)
+Contents: [Top level](#top-level) · [nodes](#nodes) · [Assignment rules](#how-files-get-assigned) · [edges](#edges) · [annotations](#annotations) · [flows](#flows) · [Recent work](#recent-work) · [Fixed names](#fixed-names) · [Targets](#targets) · [Full example](#full-example)
 
 ## Top level
 
@@ -162,6 +162,42 @@ Good candidates:
 - **Checked like everything else:** an id, path or route that isn't on the map is an error with a "did you mean …", so a fixed name never disappears quietly.
 - **describe.mjs** writes no worksheet entry for something whose name and description are both fixed (not even with `--all`). With only the name fixed, the worksheet marks it `FIXED NAME`: keep the name, write the description.
 - **refresh.mjs** never changes names.json. When a fixed file is moved or deleted, or a fixed endpoint changes address, NEXT says so, and the entry is moved or removed by hand.
+
+## targets
+
+`floorplan/targets.json` is optional. It lists the places the app writes to or reads from (databases, services, files, APIs, queues), which parts write to each and which only read, and whether a target allows **one writer only**. Many apps built with AI have that rule ("only the orders service changes the orders table"), and this is where the map checks it. The map then has a **Targets** panel, write and read lines from each part to the target's box, and Health findings when the rule is broken.
+
+```json
+{
+  "targets": [
+    { "id": "orders-db", "name": "Orders", "kind": "database", "external": "pg",
+      "writers": ["api.orders"], "readers": ["api.reports", "worker"], "policy": "single-writer",
+      "note": "Only the orders API changes orders; everything else reads." },
+    { "id": "payments", "name": { "en": "Card payments", "de": "Kartenzahlungen" }, "kind": "api", "external": "stripe",
+      "writers": ["shop-api/app/services/refunds.py", "shop-api/app/routes/checkout.py"], "policy": "any" },
+    { "id": "price-list", "name": "Price list", "kind": "file",
+      "writers": ["scripts/import_prices.py"], "readers": ["shop-api/app/**"], "policy": "single-writer" }
+  ]
+}
+```
+
+| field | type | meaning |
+|---|---|---|
+| `id` | string | required, unique; letters, digits, `_ - .` |
+| `name` | string or one per language | required. Shown in the panel and on the lines. Same rule as in [names.json](#fixed-names): `{ "en": "…", "de": "…" }` |
+| `kind` | enum | `database` `service` `file` `api` `queue` `other` |
+| `external` | string | optional. The node in architecture.json that stands for the target on the map, normally an external node. Without it the target is listed and checked, but nothing is drawn |
+| `writers` | string[] | required (may be empty). Each entry is a node id, or a file path or glob. A glob that matches every file of a part stands for that part |
+| `readers` | string[] | optional, same form |
+| `policy` | `"single-writer"` \| `"any"` | required. `single-writer`: more than one writer is a Health finding (important) |
+| `note` | string or one per language | optional. One plain sentence shown with the target |
+
+A bare list (`[ … ]`) works as well as `{ "targets": [ … ] }`.
+
+- **Counting writers:** each entry is a writer, except one that lies inside another (a file of a part that's listed, or the same entry twice).
+- **Only listed writers count.** The scan's own findings never add a writer. When it sees a web request to a target's hosts, or an import of its packages, from a part that isn't listed as a writer or reader of any target on that box, it adds a minor Health finding: `POST`, `PUT`, `PATCH` and `DELETE` read as writes, `GET` as reads, and anything else (an imported package, a request whose method isn't in the code) as direction unknown. Tests are left out.
+- **Checked like everything else:** an unknown `kind`, `policy`, `external`, part id or path is an error with a "did you mean …".
+- A read is drawn like a write, from the part to the target, but dashed; on hover its data flows back to the reader.
 
 ## Full example
 

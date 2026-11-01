@@ -61,7 +61,8 @@ A count of important issues, and a plain-language list of problems the scan foun
 - servers that let any website call them, flagged as worth fixing when login cookies go along too;
 - endpoints that let anyone change or read data without signing in;
 - files nothing uses;
-- files over about 1,000 lines, which AI struggles to edit safely.
+- files over about 1,000 lines, which AI struggles to edit safely;
+- with a `targets.json`: a target that allows one writer but has more, and calls into a target that the file doesn't list (see [Targets](#targets)).
 
 Each issue has **Show on map**, which highlights the affected files and endpoints with notes, and **Fix with Claude** (or **Fix with Codex**, for a map made in Codex), which copies a ready-made prompt naming the exact files and lines and the safe fix. It's a quick automatic check, not a security audit. On a blueprint this button is **Review** instead (see [Blueprints](#blueprints)).
 
@@ -70,6 +71,9 @@ Appears when Claude or Codex has just changed things. It lays the changed cards 
 
 ### Screens
 Every page of your app that Floorplan detected. Pick one to see everything behind it: its components, the requests it makes, the server code that answers them, the data they touch, and outside services.
+
+### Targets
+Appears when the project has a `floorplan/targets.json`: the databases, services, files, APIs and queues the app writes to or reads from, and which parts do it. Each target lists its **Writers** and **Readers** as tiles (click one to go there on the map) and the parts the scan saw calling it that the file doesn't list. A target that allows **One writer only** but has more than one turns red here and on the map, with the writes into it, and the Health check has a fix for it. On the map, writes and reads are their own kinds of line (a read is dashed), and selecting a part shows what it writes to and reads from. See the [format](../skills/floorplan/references/schema.md#targets).
 
 ### Export
 Saves a copy of the map to send to anyone, such as a teammate, a client, or someone without Claude or Codex. It's one HTML file that opens in any browser with nothing to install. The copy has the whole map, search, screens, the tour and flows, but no Ask bar, no **Fix with Claude** or **Build this** requests, no editor links, and nothing about your computer, like its folder path. An **Exported** label beside the title shows the date, and a small **Made with Floorplan** link at the bottom leads here.

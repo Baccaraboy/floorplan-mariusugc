@@ -157,7 +157,8 @@ if (wrappers.size) for (const f of files) {
 const routes = resolveRoutes(files);
 const http = matchCalls(files, routes);
 const hosts = [];
-for (const f of files) for (const h of f.hosts || []) hosts.push({ from: f.path, host: h.host, line: h.line });
+// the method, when the call shows it, tells a write (POST, PUT, PATCH, DELETE) from a read (GET) for targets.json
+for (const f of files) for (const h of f.hosts || []) hosts.push({ from: f.path, host: h.host, line: h.line, ...(h.method ? { method: h.method } : {}) });
 
 // ---------- 5. write scan.json ----------
 const scan = {
