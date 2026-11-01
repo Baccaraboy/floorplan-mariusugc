@@ -62,6 +62,7 @@ By default everything is written for the app's owner, not an engineer: what each
 
 - connects the parts, using imports, matched requests and the AI's explicit connections;
 - with a `targets.json`, adds who writes to and reads from each database, service or file, and checks a one-writer rule;
+- with a `layers.json`, sorts every file into the system, the setup and the content, and checks what would keep the system from being published;
 - runs the **Health** check;
 - detects **screens**: Next.js, React Router, Vue, SvelteKit, Remix, Nuxt, Astro, Expo, Angular, TanStack;
 - writes `graph.json` and the self-contained `index.html`, noting whether Claude Code or Codex made it, so the map's Ask bar and fix prompts name the right one.

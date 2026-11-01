@@ -25,7 +25,7 @@ Asking questions on the map runs Claude Code or Codex, which talk to Anthropic o
 
 | Program | When | Why |
 |---|---|---|
-| `git` | scan | Read-only: which files are tracked, the current branch and commit, what changed since the last map |
+| `git` | scan | Read-only: which files are tracked (or ignored, for a private word list kept inside the project), the current branch and commit, what changed since the last map |
 | `where` (Windows) or `which` | starting the map's server | Finding the Claude Code or Codex CLI |
 | `claude` or `codex` | when you ask a question on the map | Answering it, read-only: `claude -p` limited to reading files and Floorplan's lookup script, or `codex exec --sandbox read-only` |
 | `node` | throughout | Running Floorplan's own scripts |

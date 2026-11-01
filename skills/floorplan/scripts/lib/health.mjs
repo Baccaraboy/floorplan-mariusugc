@@ -6,12 +6,15 @@
 // findIssues(src, file)  — called by scan.mjs for every code/config/docs file with its source.
 //                           Returns raw findings for that file, stored in scan.json files[].issues.
 //                           Findings never contain a secret's value, only its line, kind and a masked hint.
-// buildHealth(ctx)       — called by build.mjs with { graph, scan, arch, root } after the graph is built.
+// buildHealth(ctx)       — called by build.mjs with { graph, scan, arch, root, layers } after the graph is built.
 //                           Returns { summary: { high, medium, low }, issues: [...] }, stored as graph.health.
+//                           With floorplan/layers.json, also the Publishability group: its issues (group
+//                           "publish") come after the others, and its counts are in publish, not in summary.
 
 import fs from 'node:fs';
 import path from 'node:path';
 import { git, compileGlob } from './common.mjs';
+import { findPublishable, wordFinder } from './layers.mjs';
 
 const lineIndex = (src) => {
   const starts = [0];
@@ -535,7 +538,7 @@ const SPECIAL_FILE = /(^|\/)(index|main|app|server|cli|manage|wsgi|asgi|__init__
 const USED_LANGS = new Set(['typescript', 'javascript', 'python', 'vue', 'svelte', 'astro']);
 const plural = (n, w, ws) => `${n} ${n === 1 ? w : ws || w + 's'}`;
 
-export function buildHealth({ graph, scan, arch, root }) {
+export function buildHealth({ graph, scan, arch, root, layers }) {
   const issues = [];
   const nodeById = new Map(graph.nodes.map((n) => [n.id, n]));
   const fileByPath = new Map(graph.files.map((f) => [f.p, f]));
@@ -1182,7 +1185,157 @@ export function buildHealth({ graph, scan, arch, root }) {
   const kept = issues.slice(0, 40);
   const summary = { high: 0, medium: 0, low: 0 };
   for (const i of kept) summary[i.severity]++;
-  return { summary, issues: kept };
+  if (!layers) return { summary, issues: kept };
+  // a group of its own: counted apart from the checks above, and never pushing one of them off the list
+  const pub = publishIssues({ scan, root, layers, itemFor, nameOf, findings });
+  return { summary, issues: [...kept, ...pub.issues], publish: pub.summary };
+}
+
+// ---------- publishability (floorplan/layers.json) ----------
+// What would keep the system from being published, by the layers in floorplan/layers.json: ids, folders and contact
+// details of this one installation in system files, words from the owner's private list (kept outside the repo) in
+// system and setup files, and system code that imports content. The finders are in lib/layers.mjs. One issue per
+// check and layer; each place is a file and a line, never a value: only its kind, or a private word's first letter.
+const PUBLISH_ORDER = ['layer-mixing', 'private-word', 'hardcoded-identifier', 'contact-data', 'machine-path'];
+const PUBLISH_KIND = { identifier: 'hardcoded-identifier', 'private-word': 'private-word', contact: 'contact-data', path: 'machine-path' };
+const isKnownKey = (s) => FORMATS.some((fm) => { fm.re.lastIndex = 0; const hit = fm.re.test(s); fm.re.lastIndex = 0; return hit; });
+function publishIssues({ scan, root, layers, itemFor, nameOf, findings }) {
+  const { layerOf } = layers;
+  const find = wordFinder(layers.words);
+  const hits = new Map(); // "kind|layer" -> [{ file, line, what }]
+  const add = (kind, layer, x) => { const k = `${kind}|${layer}`; if (!hits.has(k)) hits.set(k, []); hits.get(k).push(x); };
+  for (const f of scan.files) {
+    if (!['code', 'config', 'docs'].includes(f.category) || f.tooLarge || f.path === layers.wordsFile) continue;
+    const layer = layerOf(f.path);
+    if (layer !== 'system' && layer !== 'config') continue;
+    let src;
+    try { src = fs.readFileSync(path.join(root, f.path), 'utf8'); } catch { continue; }
+    // lines with a secret are the secret check's: the identifier check doesn't report them again
+    const secretLines = new Set(findings(f.path).filter((x) => x.k === 'secret').map((x) => x.line));
+    for (const x of findPublishable(src, f, { layer, find, test: TEST_FILE.test(f.path), skipLines: secretLines, known: isKnownKey })) add(PUBLISH_KIND[x.k], layer, { file: f.path, line: x.line, what: x.what || x.mask });
+  }
+  // system code that imports a content file (the setup is there to be imported, content isn't); tests left out
+  for (const e of scan.edges || []) if (layerOf(e.from) === 'system' && layerOf(e.to) === 'content' && !TEST_FILE.test(e.from)) add('layer-mixing', 'system', { file: e.from, line: e.line || 1, what: e.to });
+
+  const patterns = (id) => layers.list.find((l) => l.id === id)?.patterns || [];
+  const where = (id) => (patterns(id).length ? `layers.json patterns: ${patterns(id).join(', ')}` : 'add patterns for it to layers.json');
+  const and = (xs) => (xs.length < 2 ? xs.join('') : `${xs.slice(0, -1).join(', ')} and ${xs.at(-1)}`);
+  const summary = { system: 0, config: 0, words: layers.wordsStatus };
+  const out = [];
+  for (const [key, all] of hits) {
+    const [kind, layer] = key.split('|');
+    summary[layer] += all.length;
+    all.sort((a, b) => a.file.localeCompare(b.file) || a.line - b.line);
+    const n = all.length;
+    const files = [...new Set(all.map((x) => x.file))];
+    const one = files.length === 1 ? files[0] : null;
+    const filesText = one ? `${nameOf(one)} (${one})` : plural(files.length, 'file');
+    const verb = (s, p) => (one ? s : p);
+    const kinds = [...new Set(all.map((x) => x.what))];
+    // "a UUID-style id and 2 32-character ids", "an email address and a phone number"
+    const many = (what) => {
+      const c = all.filter((x) => x.what === what).length;
+      if (c === 1) return what;
+      const w = what.replace(/^an? /, ''), at = / on /.test(w) ? w.indexOf(' on ') : w.includes(' (') ? w.indexOf(' (') : w.length;
+      return `${c} ${w.slice(0, at)}${/(s|sh|ch|x)$/.test(w.slice(0, at)) ? 'es' : 's'}${w.slice(at)}`;
+    };
+    const counted = and(kinds.map(many));
+    const items = [], noted = new Map();
+    for (const x of all) {
+      const it = itemFor(x.file);
+      if (!it) continue;
+      if (!items.includes(it)) items.push(it);
+      if (!noted.has(it)) noted.set(it, []);
+      const at = it === 'f:' + x.file ? `line ${x.line}` : `${x.file.split('/').pop()}, line ${x.line}`;
+      noted.get(it).push(`${at}: ${kind === 'layer-mixing' ? `imports ${x.what}` : x.what}`);
+    }
+    const shown = items.slice(0, 24);
+    const notes = Object.fromEntries(shown.map((it) => { const l = noted.get(it); return [it, l.slice(0, 4).join(' · ') + (l.length > 4 ? ` · +${l.length - 4} more` : '')]; }));
+    const places = [...all.slice(0, 60).map((x) => `- ${x.file}:${x.line}: ${kind === 'layer-mixing' ? `imports ${x.what}` : x.what}`), ...(n > 60 ? [`- …and ${n - 60} more`] : [])];
+    const setup = layer === 'config';
+    const text = {
+      'hardcoded-identifier': {
+        severity: 'medium',
+        title: n === 1 ? 'An identifier of one installation sits in system code' : `${n} identifiers of one installation sit in system code`,
+        detail: `${filesText} ${verb('holds', 'hold')} ${counted}. An identifier of one installation sits in system code: anyone who installs the system would be pointed at this installation's database, calendar, documents or accounts. Move ${n === 1 ? 'it' : 'them'} to configuration, like an environment variable or a setup file in the config layer.`,
+        fix: [
+          `Publishability fix: identifiers of one installation in system code. Do not print, echo or repeat any of these values in your replies, commits or logs.`,
+          ``,
+          `floorplan/layers.json puts these files in the system layer, the part that could be published. They contain ids that belong to this one installation:`,
+          ...places,
+          ``,
+          `For each one:`,
+          `1. Find out what the id stands for (a database, a calendar, a document, an account) and give it a clear setting name, for example ORDERS_DATABASE_ID.`,
+          `2. Read it from configuration instead: an environment variable, or a setup file in the config layer (${where('config')}). If the code can't run without it, stop with a clear message when it's missing; don't fall back to the old value.`,
+          `3. Add the setting's name, never its value, to .env.example or an example setup file, so someone installing the system knows what to fill in.`,
+          `If an id is the same for everyone (a fixed id of a public service), leave it and tell me why.`,
+        ],
+      },
+      'private-word': {
+        severity: 'medium',
+        title: n === 1 ? `A name from your private word list is in ${setup ? 'a setup file' : 'system files'}` : `Names from your private word list are in ${setup ? 'setup files' : 'system files'} (${n} places)`,
+        detail: `${filesText} ${verb('contains', 'contain')} ${n === 1 ? 'a word' : 'words'} from your private word list (${and([...new Set(all.flatMap((x) => x.what.split(', ')))])}). ${setup
+          ? 'These are setup files, the part someone else replaces with their own, so names of customers, people and places belong in your content instead.'
+          : 'These files are the system you could publish, so the names would go out with it.'} Only each word's first letter is shown; the list itself stays on your computer.`,
+        fix: [
+          `Publishability fix: words from my private word list in ${setup ? 'setup files (the config layer)' : 'system files'}. The list itself stays outside the repo. Never write any of these words in your replies, commits, logs or new files; I know which ones they are.`,
+          ``,
+          `These lines contain a private word (the name of a customer, a person or a place), shown by its first letter:`,
+          ...places,
+          ``,
+          setup
+            ? `Setup is what someone else would replace with their own, so names don't belong here. For each line, move the name into the content layer (${where('content')}) and have the setup point at it, or replace it with a neutral placeholder.`
+            : `For each line, replace the name with a neutral or made-up one (in comments, docs, tests and examples), or, where the code needs the real value, move it into the content layer (${where('content')}) and read it from there.`,
+          `Don't change what the code does. Then tell me which files you changed, without naming the words.`,
+        ],
+      },
+      'contact-data': {
+        severity: 'low',
+        title: n === 1 ? `Contact details are written into ${nameOf(all[0].file)}` : `Contact details are written into system code (${n} places)`,
+        detail: `${filesText} ${verb('contains', 'contain')} ${counted}, most likely this installation's own or a person's. ${n === 1 ? 'It' : 'They'} would be published with the system. Addresses at example.com and noreply addresses don't count.`,
+        fix: [
+          `Publishability fix: contact details in system code. Do not repeat the addresses or numbers in your replies, commits or logs.`,
+          ``,
+          `These lines in the system layer contain an email address or a phone number:`,
+          ...places,
+          ``,
+          `For each one, tell me whose it is: this installation's own, a customer's or another person's, or a public address that's meant to ship with the system. Move the ones that belong to this installation or to people into configuration (an environment variable, or a setup file in the config layer: ${where('config')}) or into content, and keep a placeholder like name@example.com where the code needs an example. Show me the plan before changing code.`,
+        ],
+      },
+      'machine-path': {
+        severity: 'low',
+        title: n === 1 ? 'System code points at a folder on one computer' : `System code points at folders on one computer (${n} places)`,
+        detail: `${filesText} ${verb('uses', 'use')} ${counted}. A folder like that exists only on this computer, so on anyone else's the system can't find it. Read it from configuration instead, or build it relative to the project.`,
+        fix: [
+          `Publishability fix: absolute paths of one computer in system code.`,
+          ``,
+          `These lines in the system layer use a folder that exists only on this machine:`,
+          ...places,
+          ``,
+          `For each one, read the folder from configuration instead (an environment variable, or a setting in the config layer: ${where('config')}), or build it relative to the project or the user's home folder (path.join(os.homedir(), …) in Node, Path.home() in Python). Keep today's folder as this installation's setting, so nothing changes here. Then run the app or its tests to check that it still finds its files.`,
+        ],
+      },
+      'layer-mixing': {
+        severity: 'medium',
+        title: n === 1 ? 'System code imports a content file' : `System code imports content files (${n} places)`,
+        detail: `${filesText} ${verb('imports', 'import')} ${kinds.length === 1 ? kinds[0] : plural(kinds.length, 'file')} from the content layer. System depends on content: the system will not run without this owner's content.`,
+        fix: [
+          `Publishability fix: system code imports content. floorplan/layers.json puts these files in the system layer, and what they import in the content layer, the owner's own data:`,
+          ...places,
+          ``,
+          `The system depends on content, so it will not run without this owner's content. For each import, tell me what the code needs from the file. Then propose one of: load the content at run time from a place the setup names (a path in configuration), or move what the code really needs (a schema, defaults, an example with made-up data) into the system. Show me the plan first, and don't change any code until I agree.`,
+        ],
+      },
+    }[kind];
+    out.push({
+      id: `publish:${kind}:${layer}`, kind, severity: text.severity, group: 'publish', layer,
+      title: text.title, detail: text.detail, items: shown, notes,
+      locations: all.slice(0, 200).map(({ file, line }) => ({ file, line })),
+      fix: text.fix.join('\n'),
+    });
+  }
+  out.sort((a, b) => SEV_ORDER[a.severity] - SEV_ORDER[b.severity] || PUBLISH_ORDER.indexOf(a.kind) - PUBLISH_ORDER.indexOf(b.kind) || (a.layer === 'system' ? -1 : 1));
+  return { issues: out, summary };
 }
 
 /** Test mode, in Firestore/Storage rules (request.time < timestamp.date(Y, M, D)) or Realtime Database rules (now < ms). */

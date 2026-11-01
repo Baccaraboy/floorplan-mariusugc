@@ -62,7 +62,8 @@ A count of important issues, and a plain-language list of problems the scan foun
 - endpoints that let anyone change or read data without signing in;
 - files nothing uses;
 - files over about 1,000 lines, which AI struggles to edit safely;
-- with a `targets.json`: a target that allows one writer but has more, and calls into a target that the file doesn't list (see [Targets](#targets)).
+- with a `targets.json`: a target that allows one writer but has more, and calls into a target that the file doesn't list (see [Targets](#targets));
+- with a `layers.json`: a **Publishability** group of its own, with its count by layer, listing what would keep the system from being published (see [Layers](#layers)).
 
 Each issue has **Show on map**, which highlights the affected files and endpoints with notes, and **Fix with Claude** (or **Fix with Codex**, for a map made in Codex), which copies a ready-made prompt naming the exact files and lines and the safe fix. It's a quick automatic check, not a security audit. On a blueprint this button is **Review** instead (see [Blueprints](#blueprints)).
 
@@ -74,6 +75,11 @@ Every page of your app that Floorplan detected. Pick one to see everything behin
 
 ### Targets
 Appears when the project has a `floorplan/targets.json`: the databases, services, files, APIs and queues the app writes to or reads from, and which parts do it. Each target lists its **Writers** and **Readers** as tiles (click one to go there on the map) and the parts the scan saw calling it that the file doesn't list. A target that allows **One writer only** but has more than one turns red here and on the map, with the writes into it, and the Health check has a fix for it. On the map, writes and reads are their own kinds of line (a read is dashed), and selecting a part shows what it writes to and reads from. See the [format](../skills/floorplan/references/schema.md#targets).
+
+### Layers
+Appears when the project has a `floorplan/layers.json`, which sorts its files into the **System** you could publish one day, the **Setup** of this one installation, and your own **Content**. Switched on, every box gets a ring and a tag in its layer's colour; a part whose files are spread over layers, none with more than half, is **Mixed**, with a dashed ring. The panel's legend lists the layers with their files: click one to show only that layer (the rest fades), and again to show all. The details of a file or part always name its layer, and with the switch on, every file and part listed there shows its layer too.
+
+The Health check then adds **Publishability**: identifiers and folders of this installation and contact details in system code, names from your private word list in the system and the setup, and system code that imports your content. Each finding names the file and line, never the value; a private word shows only its first letter, and the list itself stays outside your repo. See the [format](../skills/floorplan/references/schema.md#layers).
 
 ### Export
 Saves a copy of the map to send to anyone, such as a teammate, a client, or someone without Claude or Codex. It's one HTML file that opens in any browser with nothing to install. The copy has the whole map, search, screens, the tour and flows, but no Ask bar, no **Fix with Claude** or **Build this** requests, no editor links, and nothing about your computer, like its folder path. An **Exported** label beside the title shows the date, and a small **Made with Floorplan** link at the bottom leads here.

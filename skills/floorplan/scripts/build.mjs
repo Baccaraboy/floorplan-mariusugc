@@ -5,11 +5,13 @@
 // usage: node build.mjs [root] [--arch <file>] [--scan <file>] [--out <dir>] [--lang <code>] [--check]
 
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { compileGlob, parseArgs, fmtNum, mapDir, keepOutOfGit } from './lib/common.mjs';
+import { compileGlob, parseArgs, fmtNum, mapDir, keepOutOfGit, git, toPosix } from './lib/common.mjs';
 import { fallbackFileName, fallbackRouteName, routeKey } from './lib/names.mjs';
 import { buildHealth, TEST_FILE } from './lib/health.mjs';
+import { LAYER_IDS, layerAssigner, majority, parseWords } from './lib/layers.mjs';
 import { buildPlanHealth } from './lib/blueprint.mjs';
 import { buildScreens } from './lib/screens.mjs';
 import { writeClaudeMd } from './lib/claudemd.mjs';
@@ -516,11 +518,83 @@ if (targetList?.length) {
   }
 }
 
+// ---------- layers (floorplan/layers.json): system, setup and content ----------
+// Which files are the system the owner could one day publish, which are the setup of this one installation (key
+// names, ids, paths, calendars) and which are the owner's content (customers, amounts, mails). Each file takes the
+// layer of the first pattern it matches, in the order of the list, else the default ("system" unless set); a part
+// takes the layer more than half of its files have, else "mixed". With layers, Health also checks what would keep
+// the system from being published (lib/layers.mjs). Its private word list lives outside the repo: it's read here and
+// handed to Health, and no word from it is written anywhere.
+const layersFile = path.join(outDir, 'layers.json');
+let layers = null; // { list, def, layerOf, words, wordsStatus, wordsFile }
+if (fs.existsSync(layersFile)) {
+  let raw;
+  try { raw = JSON.parse(fs.readFileSync(layersFile, 'utf8')); } catch (e) { err(`layers.json is not valid JSON: ${e.message}`); }
+  if (raw !== undefined && (!raw || typeof raw !== 'object' || Array.isArray(raw))) err('layers.json must be an object: { "layers": [ … ], "default": "system" }');
+  else if (raw !== undefined) {
+    const FIELDS = ['layers', 'default', 'privateWords'];
+    for (const k of Object.keys(raw)) if (!FIELDS.includes(k) && k !== '$schema') err(`layers.json: unknown field "${k}"${didYouMean(k, FIELDS)}`);
+    if (!Array.isArray(raw.layers) || !raw.layers.length) err('layers.json "layers" must be a list of layers, like [{ "id": "config", "patterns": ["config/**"] }]');
+    const list = [];
+    (Array.isArray(raw.layers) ? raw.layers : []).forEach((l, i) => {
+      const where = `layers.json layers[${i}]${isStr(l?.id) ? ` ("${l.id}")` : ''}`;
+      if (!l || typeof l !== 'object' || Array.isArray(l)) return err(`${where} must be an object`);
+      if (!LAYER_IDS.includes(l.id)) return err(`${where}.id ${l.id === undefined ? 'is required, one' : `"${l.id}" must be one`} of ${LAYER_IDS.join(', ')}${didYouMean(String(l.id ?? ''), LAYER_IDS)}`);
+      if (list.some((x) => x.id === l.id)) return err(`${where}.id duplicates an earlier layer`);
+      if (!isStrArr(l.patterns) || l.patterns.some((p) => !p.trim())) err(`${where}.patterns must be a list of globs, relative to the codebase root (an empty list is fine)`);
+      const name = fixedText(l.name, `${where}.name`, false), description = fixedText(l.description, `${where}.description`, false);
+      list.push({ id: l.id, ...(name ? { name } : {}), ...(description ? { description } : {}), patterns: isStrArr(l.patterns) ? l.patterns.filter((p) => p.trim()) : [], where });
+    });
+    // a pattern that matches nothing is likely a typo, or code that moved
+    for (const l of list) l.patterns.forEach((p, j) => { const g = compileGlob(p); if (!filesAll.some((f) => g.test(f.path))) warn(`${l.where}.patterns[${j}] "${p}" matches no file`); });
+    const def = raw.default === undefined ? 'system' : raw.default;
+    if (!LAYER_IDS.includes(def)) err(`layers.json default "${def}" must be one of ${LAYER_IDS.join(', ')}${didYouMean(String(def), LAYER_IDS)}`);
+    else if (!list.some((x) => x.id === def)) list.push({ id: def, patterns: [] }); // the default needs no patterns of its own
+    // the private word list: a path relative to the codebase root, or absolute (~ is the home folder); a blueprint has no code to check
+    let words = null, wordsStatus = 'unset', wordsFile = null;
+    if (raw.privateWords !== undefined && !isStr(raw.privateWords)) err('layers.json privateWords must be the path to your private word list (relative to the codebase root, or absolute)');
+    else if (isStr(raw.privateWords) && !scan.blueprint) {
+      const abs = path.resolve(root, raw.privateWords.replace(/^~(?=$|[\\/])/, () => os.homedir()));
+      let text = null;
+      try { text = fs.readFileSync(abs, 'utf8'); } catch {}
+      if (text === null) {
+        wordsStatus = 'missing';
+        warn(`layers.json privateWords: there is no file at ${raw.privateWords}, so the private-word check was skipped. Keep the list outside the repo, one word or name per line.`);
+      } else {
+        const parsed = parseWords(text);
+        words = parsed.words;
+        wordsStatus = words.length ? 'checked' : 'empty';
+        if (parsed.short) warn(`the private word list has ${parsed.short} entr${parsed.short === 1 ? 'y' : 'ies'} under two characters, left out (they would match almost anywhere)`);
+        // inside the project, the list must at least be ignored by git; floorplan/ ignores itself
+        const rel = path.relative(root, abs);
+        if (!rel.startsWith('..') && !path.isAbsolute(rel)) {
+          wordsFile = toPosix(rel);
+          const inMapDir = !path.relative(outDir, abs).startsWith('..');
+          if (!inMapDir && git(path.dirname(abs), ['check-ignore', '-q', abs]) === null) warn(`layers.json privateWords points inside the project (${wordsFile}), and git doesn't ignore it. Keep the word list outside the repo, so it's never committed or shared.`);
+        }
+      }
+    }
+    layers = { list, def: LAYER_IDS.includes(def) ? def : 'system', words, wordsStatus, wordsFile };
+    layers.layerOf = layerAssigner(list, layers.def);
+  }
+}
+// how many files of each layer every part holds, its own and its children's
+const layerCounts = new Map();
+if (layers) for (const f of included) {
+  const l = layers.layerOf(f.path), seen = new Set();
+  for (let id = owner.get(f.path); id && !seen.has(id); id = id === 'unassigned' ? null : byId.get(id)?.parent) {
+    seen.add(id);
+    if (!layerCounts.has(id)) layerCounts.set(id, {});
+    layerCounts.get(id)[l] = (layerCounts.get(id)[l] || 0) + 1;
+  }
+}
+const layerOfPart = (id) => (layerCounts.has(id) ? { layer: majority(layerCounts.get(id)), layers: layerCounts.get(id) } : {});
+
 // ---------- report ----------
 const pct = included.length ? (unassigned.length / included.length) * 100 : 0;
 const report = [];
 if (errors.length) {
-  report.push(`✗ ${errors.length} error(s) in ${path.relative(root, archFile)}${scan.blueprint ? ' or plan.json' : ''}${['names.json', 'targets.json'].filter((f) => errors.some((e) => e.startsWith(f))).map((f) => ` or ${f}`).join('')}:`);
+  report.push(`✗ ${errors.length} error(s) in ${path.relative(root, archFile)}${scan.blueprint ? ' or plan.json' : ''}${['names.json', 'targets.json', 'layers.json'].filter((f) => errors.some((e) => e.startsWith(f))).map((f) => ` or ${f}`).join('')}:`);
   for (const e of errors) report.push(`  - ${e}`);
 }
 if (warnings.length) {
@@ -574,9 +648,10 @@ const graph = {
         tags: n.tags || [], paths: n.paths || [], packages: n.packages || [], hosts: n.hosts || [],
         stats: { ...stats.get(n.id), repos: [...stats.get(n.id).repos] },
         ...(fx ? { fixed: fx.fixed } : {}),
+        ...layerOfPart(n.id),
       };
     }),
-    ...(unassigned.length ? [{ id: 'unassigned', parent: null, label: words['unassigned.label'], kind: 'misc', summary: words['unassigned.summary'], details: '', tags: [], paths: [], packages: [], hosts: [], stats: { ...stats.get('unassigned'), repos: [...stats.get('unassigned').repos] } }] : []),
+    ...(unassigned.length ? [{ id: 'unassigned', parent: null, label: words['unassigned.label'], kind: 'misc', summary: words['unassigned.summary'], details: '', tags: [], paths: [], packages: [], hosts: [], stats: { ...stats.get('unassigned'), repos: [...stats.get('unassigned').repos] }, ...layerOfPart('unassigned') }] : []),
   ],
   files: included.map((f) => {
     const d = fileDesc.get(f.path);
@@ -590,6 +665,7 @@ const graph = {
       ...(f.h ? { h: f.h, sig: f.sig } : {}),
       ...(f.symbols ? { s: f.symbols.map((s) => [s.name, s.kind, s.line, s.default ? 1 : 0, s.doc || '']) } : {}),
       ...(notes.has(f.path) ? notes.get(f.path) : {}),
+      ...(layers ? { layer: layers.layerOf(f.path) } : {}),
     };
   }),
   routes: routesIn.map((r) => {
@@ -600,11 +676,16 @@ const graph = {
   flows: outFlows,
   tour: outTour,
   ...(outTargets.length ? { targets: outTargets } : {}),
+  // the layers as the map shows them (never the private words, which only Health gets)
+  ...(layers ? { layers: {
+    list: layers.list.map(({ where, ...l }) => ({ ...l, files: included.filter((f) => layers.layerOf(f.path) === l.id).length })),
+    default: layers.def, mixed: [...layerCounts.values()].filter((c) => majority(c) === 'mixed').length,
+  } } : {}),
   ...(outRecent?.items.length ? { recent: outRecent } : {}),
 };
 // extension hooks, computed from the finished graph plus the raw scan
 // a blueprint has no code to check, so its Health is a design review of the plan (computed after screens)
-if (!scan.blueprint) try { graph.health = buildHealth({ graph, scan, arch, root }); } catch (e) { warn(`health check failed: ${e.message}`); graph.health = { issues: [] }; }
+if (!scan.blueprint) try { graph.health = buildHealth({ graph, scan, arch, root, layers }); } catch (e) { warn(`health check failed: ${e.message}`); graph.health = { issues: [] }; }
 try { graph.screens = buildScreens({ graph, scan, arch, root }); } catch (e) { warn(`screen detection failed: ${e.message}`); graph.screens = []; }
 if (scan.blueprint) try { graph.health = buildPlanHealth({ graph, scan }); } catch (e) { warn(`design review failed: ${e.message}`); graph.health = { issues: [] }; }
 fs.mkdirSync(outDir, { recursive: true });
@@ -658,11 +739,21 @@ function escapeHtml(s) { return s.replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<'
 const hs = graph.health?.summary;
 if (hs && (hs.high || hs.medium || hs.low)) {
   report.push(`${scan.blueprint ? 'DESIGN REVIEW' : 'HEALTH'}  ${hs.high} important · ${hs.medium} worth fixing · ${hs.low} minor`);
-  for (const i of graph.health.issues.filter((x) => x.severity !== 'low').slice(0, 8)) report.push(`  [${i.severity}] ${i.title}`);
+  for (const i of graph.health.issues.filter((x) => x.severity !== 'low' && x.group !== 'publish').slice(0, 8)) report.push(`  [${i.severity}] ${i.title}`);
 }
 if (graph.screens?.length) report.push(`SCREENS  ${graph.screens.length} detected`);
 const nConflicts = outTargets.filter((t) => t.conflict).length;
 if (outTargets.length) report.push(`TARGETS  ${outTargets.length}${nConflicts ? ` (${nConflicts} with more than one writer)` : ''}`);
+if (graph.layers) {
+  const nMixed = graph.layers.mixed;
+  report.push(`LAYERS  ${graph.layers.list.map((l) => `${l.id} ${l.files}`).join(' · ')} files on the map${nMixed ? ` (${nMixed} part${nMixed === 1 ? '' : 's'} mixed)` : ''}`);
+}
+const pub = graph.health?.publish;
+if (pub) {
+  const unchecked = { missing: 'no word list at the path in layers.json', unset: 'no "privateWords" in layers.json', empty: 'the word list is empty' }[pub.words];
+  report.push(`PUBLISHABILITY  ${pub.system} finding${pub.system === 1 ? '' : 's'} in system, ${pub.config} in config${unchecked ? `; private words not checked (${unchecked})` : ''}`);
+  for (const i of graph.health.issues.filter((x) => x.group === 'publish')) report.push(`  [${i.severity}] ${i.title}`);
+}
 if (lang !== 'en') report.push(`LANGUAGE  ${words['lang.name']} (${lang}): the map's buttons, panels and glossary`);
 report.push(graph.recent
   ? `RECENT WORK  ${graph.recent.items.length} card(s) highlighted across ${graph.recent.tasks.length} task(s)`
