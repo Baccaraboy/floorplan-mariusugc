@@ -2,7 +2,7 @@
 
 `floorplan/architecture.json` describes the structure: subsystems, modules, external services, flows. Names and descriptions for individual files and routes go in `floorplan/descriptions/*.json` instead (see [writing-descriptions.md](writing-descriptions.md)). They're kept separate so parallel agents can write them without conflicts. `build.mjs` checks both against the scan and reports problems by field.
 
-Contents: [Top level](#top-level) · [nodes](#nodes) · [Assignment rules](#how-files-get-assigned) · [edges](#edges) · [annotations](#annotations) · [flows](#flows) · [Recent work](#recent-work) · [Fixed names](#fixed-names) · [Targets](#targets) · [Rules and decisions](#rules-and-decisions) · [Layers](#layers) · [Operations](#operations) · [git](#git) · [Full example](#full-example)
+Contents: [Top level](#top-level) · [nodes](#nodes) · [Assignment rules](#how-files-get-assigned) · [edges](#edges) · [annotations](#annotations) · [flows](#flows) · [Recent work](#recent-work) · [Fixed names](#fixed-names) · [Targets](#targets) · [Rules and decisions](#rules-and-decisions) · [Schedules](#schedules) · [Layers](#layers) · [Operations](#operations) · [git](#git) · [Full example](#full-example)
 
 ## Top level
 
@@ -82,7 +82,7 @@ Good candidates:
 - service → database (`data`)
 - publisher → queue → consumer (`queue` / `event`)
 - webhooks coming in from third parties (`http`, from the external node to the handler)
-- cron/scheduler → job (`call`)
+- cron/scheduler → job (`call`); a schedule the scan finds, or one listed in [schedules.json](#schedules), draws its own `event` edge
 - Firebase background functions (schedules, Firestore/Storage/Pub/Sub triggers, from the scan's FIREBASE FUNCTIONS list) → a `worker` node; link the collection or topic that triggers them (`event`)
 - calls through env-configured base URLs that the matcher missed (`http`)
 
@@ -241,6 +241,58 @@ A bare list (`[ … ]`) works as well as `{ "rules": [ … ] }`.
 - **Health:** a retired rule that still names places is a minor finding, "Retired rule still applied", so the owner sees what is left to clean up in the file or in the code. Nothing else: the refs were checked by the build.
 - **In `MAP.md`:** a `## Rules` section after Targets, one block per rule: kind, dates, where it applies (by the names of the parts, targets and files, up to 8), the text in one line, the source.
 
+## schedules
+
+Much of what a system does, no person starts: a cron every five minutes, a nightly job, a weekly report, a pipeline that runs in the morning. The scan finds those schedules in the files that hold them, `floorplan/schedules.json` (optional) adds the ones it can't see and corrects the ones it found, and the map shows them under a **Clock** button: a 24-hour strip with a mark for every start, the list, and a mark on every card a schedule starts.
+
+**What the scan finds**, with no parser beyond a few lines of looking:
+
+| form | where | what it reads |
+|---|---|---|
+| `github-actions` | `.github/workflows/*.yml` | `on.schedule[].cron` (`- cron: '30 2 * * *'`), the workflow's `name` as the title; times are UTC |
+| `vercel` | `vercel.json` | `crons[].{ path, schedule }`; the path is what the cron calls, as `GET /path`; UTC |
+| `n8n` | a `*.json` with `"nodes"` and a Schedule Trigger or Cron node | the rule as a cron expression where cron can say it exactly (every N minutes or hours, daily, weekly, monthly), else an interval ("every 2 days at 02:30"); the workflow's `name`, its `settings.timezone`, the HTTP Request nodes as what it calls (`POST /path`); a disabled node is switched off |
+| `crontab` | `crontab`, `*.cron`, `*.crontab`, `cron.d/*` | `m h dom mon dow command` and `@daily command`; `CRON_TZ=` or `TZ=` lines set the zone for the lines below; in `cron.d/` the user before the command is dropped; `@reboot` is not a time |
+| `ofelia` | `docker-compose*.yml` | `ofelia.job-exec.<name>.schedule` (and `job-run`) with `.command`, as a map or a list of labels; `@every 1h` and 6-field expressions become 5 fields, `@every 90m` an interval; the service is named in the title |
+
+Each find gets an id from its form and name (`actions-report`, `vercel-api-cron-cleanup`, `n8n-weekly-digest`, `cron-holer-sh`, `ofelia-backup`; a second find of the same name gets `-2`), the file as its `source` and `trigger`, and the scan lists them (`SCHEDULES  N found: …`), so an owner can refer to them by id.
+
+```json
+{
+  "schedules": [
+    { "id": "nightly-report", "title": "Nightly report", "cron": "30 2 * * *", "tz": "Europe/Berlin",
+      "trigger": ".github/workflows/report.yml", "runs": ["api.reports"], "calls": "POST /reports/run",
+      "note": "Builds the daily PDF and mails it.", "source": "README § Schedules" },
+    { "id": "actions-ci", "runs": ["tests"], "enabled": false },
+    { "id": "by-hand", "title": { "en": "Monthly invoices", "de": "Monatsrechnungen" }, "human": "on the first working day of the month", "source": "docs/billing.md" }
+  ]
+}
+```
+
+| field | type | meaning |
+|---|---|---|
+| `id` | string | required, unique; letters, digits, `_ - .`. The id of a find **overrides that find field by field**: a better title, the parts it runs, a note, `"enabled": false`. Any other id is a plan of its own |
+| `title` | string or one per language | required for a plan of its own. As in [names.json](#fixed-names): `{ "en": "…", "de": "…" }` |
+| `cron` | string | five fields, `minute hour day month weekday` (`@daily`, `@hourly` and the like work too). Required for a plan of its own unless `human` says when it runs. An expression that isn't five fields is a warning and is shown as written |
+| `human` | string or one per language | when it runs, in words, for a plan cron can't express; shown in place of the words the build makes |
+| `tz` | string | optional, a time zone name like `Europe/Berlin`; shown with the plan. A find from GitHub Actions or Vercel carries `UTC` |
+| `trigger` | string | optional: what starts the plan, a part id, a file path or `"METHOD /path"`. A file the scan saw but the map doesn't show (a workflow or a crontab is config) stays as its path |
+| `runs` | string[] | optional: what the plan runs, each a part id, a file path or glob (a glob that covers a whole part stands for the part), `"METHOD /path"` or a target id from [targets.json](#targets) |
+| `calls` | string | optional: what the plan calls, as `METHOD /path` or a command. A call that names an endpoint on the map counts as a run too |
+| `note` | string or one per language | optional, one plain sentence |
+| `source` | string | optional: where the schedule is written down (`README § Schedules`); a find's source is its file |
+| `enabled` | boolean | default `true`. `false` keeps the plan in the list, dimmed, with no mark on the strip and nothing on the map |
+
+A bare list (`[ … ]`) works as well as `{ "schedules": [ … ] }`.
+
+- **Checked like everything else:** an unknown field, an unknown ref in `trigger` or `runs`, a repeated id, a plan of its own without title or without `cron` or `human` is an error with a "did you mean …". A `cron` that isn't five fields and a `tz` this Node doesn't know are warnings: the plan is shown as written.
+- **Words and the strip:** the build puts a cron into words in the map's language ("every 20 minutes", "hourly at :30", "daily at 02:30", "weekdays at 08:00", "every Sunday at 03:00", "monthly on the 1st at 06:00"; a rarer form is shown as written) and works out `times`, the minutes of one day it starts at: the series for a plan that runs any day, none for a weekly or monthly one.
+- **In `graph.json`:** `graph.schedules` = `[{ id, title, cron, tz, human, trigger, runs, calls, note, source, kind, found, enabled, times }]`, with `trigger` a card (`n:…`, `f:…`, `r:…`) or a path, `runs` the cards each ref resolved to (`t:<target id>` for a target), `kind` the form the scan found it in (`github-actions`, `vercel`, `n8n`, `crontab`, `ofelia`; `null` for a plan of the owner's own). The build reports `SCHEDULES  N (a found, b declared) · next: HH:MM Title`, or `SCHEDULES  none`.
+- **On the board:** a plan in force whose trigger and runs are both on the map draws an `event` edge from the one to the other, labelled with its cron, so the clock shows among the connections. With `"include": ["code", "config"]` the workflow or compose file is on the map and the edge starts there.
+- **On the map:** a **Clock** switch in the top bar. Switched on, every card a plan starts (its trigger, what it runs, and the parts holding them) carries a small clock mark with the plans on hover, and the panel opens: a 24-hour strip with a mark for every start (a band where a plan runs every ten minutes or more often), then the list, next start first, the switched-off plans dimmed at the end. A plan opens with its details, its trigger and its places as links, and puts its cards on a board.
+- **In `MAP.md`:** a `## Schedules` section after Rules, one line per plan: title and id, the cron and its words with the time zone, the trigger, what runs (by name), the call, the note, the source, and `off` for a switched-off plan.
+- **The agent never makes a time up.** It writes `runs` for what the scan found and adds plans the project documents (a README section, a deploy guide, a hosting dashboard the user describes), with `source`; a schedule nobody wrote down is not one.
+
 ## layers
 
 `floorplan/layers.json` is optional. It sorts the project's files into three layers, for an owner who might one day publish the code:
@@ -331,7 +383,7 @@ What a script has to produce: the JSON above, written whole (write to a temporar
 `"git"` in architecture.json says whether the map's files may go in git. Every script that writes the folder reads it and rewrites the folder's own `.gitignore` to match, so the mode lives in architecture.json, not in that file.
 
 - **`"none"`** (the default, and what a missing field means): the `.gitignore` in `floorplan/` ignores everything in the folder, itself included. Nothing of the map is ever committed, and `git status` doesn't show the folder.
-- **`"inputs"`**: the `.gitignore` ignores only what a build writes again: `index.html`, `graph.json`, `artifact.html`, `query.mjs`, `serve.mjs`, `recent-work.json`, `.cache/` and an exported `<project>-map.html`, and `ops.json`, which the owner's tooling rewrites with every run. What is left can be committed: `architecture.json`, `plan.json`, `names.json`, `targets.json`, `rules.json`, `layers.json`, `custom-flows.json`, `descriptions/`, `MAP.md` and the `.gitignore` itself. Floorplan only reads and writes files; it never commits anything.
+- **`"inputs"`**: the `.gitignore` ignores only what a build writes again: `index.html`, `graph.json`, `artifact.html`, `query.mjs`, `serve.mjs`, `recent-work.json`, `.cache/` and an exported `<project>-map.html`, and `ops.json`, which the owner's tooling rewrites with every run. What is left can be committed: `architecture.json`, `plan.json`, `names.json`, `targets.json`, `rules.json`, `schedules.json`, `layers.json`, `custom-flows.json`, `descriptions/`, `MAP.md` and the `.gitignore` itself. Floorplan only reads and writes files; it never commits anything.
 
 Any other value is an error with a "did you mean …". When git already tracks files that the folder now ignores, the build prints the `git rm --cached` command that untracks them. If a rule from outside the folder (a `.gitignore` above it, `.git/info/exclude`) ignores `MAP.md`, the build warns that the inputs can't be committed.
 
@@ -345,11 +397,12 @@ Every build writes `floorplan/MAP.md`, whatever `git` says: the map as plain tex
 | `## Parts` | per part, in tree order: its description, kind and size in files, path patterns, layer (with `layers.json`), the part it is in and the parts inside it, the targets it writes and reads, its key files (up to 12, the most connected first, each with its name and one sentence) and its endpoints |
 | `## Targets` | per target: kind, policy, writers, readers, the note, calls the Health check found that targets.json doesn't list; a target with more writers than its policy allows is marked |
 | `## Rules` | per rule or decision: kind, status and dates, where it applies (the names of the parts, targets and files, up to 8), the text in one line, the source; the retired ones last |
+| `## Schedules` | per schedule, one line: title and id, cron and words with the time zone, trigger, what runs (by name), call, note, source; the switched-off ones last, marked `off` |
 | `## Flows` | per flow: its description and numbered steps |
 | `## Health` | one line per finding: severity, title and the number of places. Never a place, a line or a value |
 | `## Recent work` | the tasks of `recent-work.json` and the cards each one touched |
 
-Each section has a marker right above its heading (`<!-- floorplan:parts -->`, `targets`, `rules`, `flows`, `health`, `recent`), so a program finds it whatever the language. A section with nothing in it says "None.". Text from the code or from people is cut to one line, so it can't add a heading or a marker of its own.
+Each section has a marker right above its heading (`<!-- floorplan:parts -->`, `targets`, `rules`, `schedules`, `flows`, `health`, `recent`), so a program finds it whatever the language. A section with nothing in it says "None.". Text from the code or from people is cut to one line, so it can't add a heading or a marker of its own.
 
 ## Full example
 

@@ -1,0 +1,7 @@
+# the server's crontab, installed with `crontab crontab`
+SHELL=/bin/sh
+CRON_TZ=Europe/Berlin
+*/5 * * * * /opt/tools/holer.sh >> /var/log/holer.log 2>&1
+@daily cd /opt/app && node scripts/backup.js
+0 7 * * mon /usr/bin/python3 /opt/app/report.py --weekly
+@reboot /opt/tools/start.sh

@@ -1,0 +1,2 @@
+# a system crontab: the user comes before the command
+15 4 * * * root /usr/sbin/prune-logs --days 30

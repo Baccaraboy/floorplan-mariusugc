@@ -43,7 +43,7 @@ const rule = (g, id) => g.rules.find((r) => r.id === id);
 const mapOf = (root) => fs.readFileSync(path.join(root, 'floorplan', 'MAP.md'), 'utf8');
 /** The Rules section of MAP.md: from its marker to the next one. */
 const ids = (items) => Array.from(items, (x) => x.id); // an array from the stand-in's own realm, so deepEqual can compare it
-const rulesSection = (md) => { const from = md.indexOf('<!-- floorplan:rules -->'); assert.ok(from >= 0, 'the Rules marker is in MAP.md'); return md.slice(from, md.indexOf('<!-- floorplan:flows -->')); };
+const rulesSection = (md) => { const from = md.indexOf('<!-- floorplan:rules -->'); assert.ok(from >= 0, 'the Rules marker is in MAP.md'); return md.slice(from, md.indexOf('<!-- floorplan:schedules -->')); };
 
 let root, graph, output;
 before(() => { root = shopWithTarget(); fs.copyFileSync(FIXTURE, rulesFile(root)); output = scanAndBuild(root); graph = readGraph(root); });
@@ -183,7 +183,7 @@ test('a retired rule on a target is marked on the target\'s box', () => {
 test('MAP.md has a Rules section with its marker after Targets: per rule its kind, dates, places, text and source', () => {
   const md = mapOf(root);
   const markers = md.split('\n').filter((l) => /^<!-- floorplan:\w+ -->$/.test(l));
-  assert.deepEqual(markers, ['parts', 'targets', 'rules', 'flows', 'health', 'recent'].map((s) => `<!-- floorplan:${s} -->`));
+  assert.deepEqual(markers, ['parts', 'targets', 'rules', 'schedules', 'flows', 'health', 'recent'].map((s) => `<!-- floorplan:${s} -->`));
   const sec = rulesSection(md);
   assert.match(sec, /^<!-- floorplan:rules -->\n## Rules\n/);
   const lines = sec.split('\n');

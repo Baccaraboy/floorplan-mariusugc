@@ -8,12 +8,13 @@ Floorplan writes to exactly two places in your project: the `floorplan/` folder,
 |---|---|---|
 | `index.html` | The map: one self-contained page | No. Rebuilt every time |
 | `graph.json` | Everything the map shows, as data | No. Rebuilt every time |
-| `MAP.md` | The map as plain text for AI workers: the parts with their key files and endpoints, who writes where, the rules and decisions, the flows, the Health findings (a title and a count each) and the recent work. In the map's language, in at most 1,500 lines | No. Rewritten when the map changes |
+| `MAP.md` | The map as plain text for AI workers: the parts with their key files and endpoints, who writes where, the rules and decisions, the schedules, the flows, the Health findings (a title and a count each) and the recent work. In the map's language, in at most 1,500 lines | No. Rewritten when the map changes |
 | `architecture.json` | The parts of your app, outside services, extra connections, flows and the tour | **Yes** |
 | `descriptions/*.json` | The name and description of every file and endpoint, one file per part | **Yes** |
 | `names.json` | Optional: names you've fixed for parts, files and endpoints, which win over everything else and no update changes. Only there if you or the AI made it | **Yes** |
 | `targets.json` | Optional: the databases, services and files your app writes to or reads from, which parts write and which read each one, and whether a target allows one writer only. Drives the **Targets** panel and its Health findings | **Yes** |
 | `rules.json` | Optional: the rules your project documents and its dated decisions, each with its source and the parts, files, endpoints or targets it applies to. Drives the **Rules** panel, **Rules here** on the cards and the retired-rule Health finding. Written only from what the project documents, never made up | **Yes** |
+| `schedules.json` | Optional: what a clock starts. The scan already finds crons in workflows, `vercel.json`, n8n workflows, crontabs and ofelia labels; this file says what each one runs, renames or switches one off, and adds the schedules the scan can't see, each with its source. Drives the **Clock** panel, the marks on the cards and the event lines from a trigger to what it runs | **Yes** |
 | `layers.json` | Optional: which files are the system you could publish, which are the setup of this installation, and which are your content, by patterns. Drives the **Layers** switch and the Publishability findings. The private word list it names is not in this folder: keep it outside the repo | **Yes** |
 | `plan.json` | Blueprints only: the planned files, endpoints and screens, who may use each endpoint, the stack, assumptions and open questions. Names and descriptions live here instead of `descriptions/` | **Yes** |
 | `recent-work.json` | What was just worked on, and why. Replaced on every update | Rarely. The AI writes it |
@@ -78,7 +79,7 @@ Sometimes the map's inputs belong in the repo: so a fresh clone, or an AI worker
 ```
 
 - **`floorplan/.gitignore`** then ignores only what a build writes again: `index.html`, `graph.json`, `artifact.html`, `query.mjs`, `serve.mjs`, `recent-work.json`, `.cache/` and exported `*-map.html` copies, plus `ops.json`, which your tooling rewrites with every run. It no longer ignores itself.
-- **What can be committed:** `architecture.json`, `descriptions/`, `names.json`, `targets.json`, `rules.json`, `layers.json`, `plan.json`, `custom-flows.json`, `.gitignore` and `MAP.md`. Floorplan never commits anything: after a build, you (or the session that owns the repo) do.
+- **What can be committed:** `architecture.json`, `descriptions/`, `names.json`, `targets.json`, `rules.json`, `schedules.json`, `layers.json`, `plan.json`, `custom-flows.json`, `.gitignore` and `MAP.md`. Floorplan never commits anything: after a build, you (or the session that owns the repo) do.
 - **`MAP.md`** is the map as text, whatever `git` says. It's written again only when its text changes (the `As of` line doesn't count), so a committed copy changes when the map does, not on every build. A worker reads it first and changes the inputs, never that file. Its format is in [schema.md](../skills/floorplan/references/schema.md#mapmd).
 - **A fresh clone** has the inputs and `MAP.md`, but no map yet. `status.mjs` says so, and `refresh.mjs` scans the code and builds one from the inputs (a blueprint is redrawn from `plan.json`).
 - **The note in `CLAUDE.local.md`**, if you have one, then starts with a paragraph that points to `MAP.md`.

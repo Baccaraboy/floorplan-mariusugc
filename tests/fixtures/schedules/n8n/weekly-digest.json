@@ -1,0 +1,22 @@
+{
+  "name": "Weekly digest",
+  "nodes": [
+    {
+      "parameters": { "rule": { "interval": [ { "field": "weeks", "weeksInterval": 1, "triggerAtDay": [0], "triggerAtHour": 18, "triggerAtMinute": 0 } ] } },
+      "name": "Every Sunday evening",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [0, 0]
+    },
+    {
+      "parameters": { "method": "POST", "url": "={{ $env.API_URL }}/api/digest", "sendBody": true },
+      "name": "Ask the server for the digest",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [220, 0]
+    }
+  ],
+  "connections": { "Every Sunday evening": { "main": [ [ { "node": "Ask the server for the digest", "type": "main", "index": 0 } ] ] } },
+  "settings": { "timezone": "Europe/Berlin" },
+  "active": true
+}

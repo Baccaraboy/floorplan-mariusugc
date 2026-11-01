@@ -1,0 +1,30 @@
+{
+  "name": "Sync orders",
+  "nodes": [
+    {
+      "parameters": { "rule": { "interval": [ { "field": "minutes", "minutesInterval": 15 } ] } },
+      "name": "Every 15 minutes",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [0, 0]
+    },
+    {
+      "parameters": { "triggerTimes": { "item": [ { "mode": "everyDay", "hour": 7, "minute": 15 } ] } },
+      "name": "Old morning trigger",
+      "type": "n8n-nodes-base.cron",
+      "typeVersion": 1,
+      "disabled": true,
+      "position": [0, 200]
+    },
+    {
+      "parameters": { "url": "http://api.internal:3000/api/orders?since=1h", "options": {} },
+      "name": "Fetch orders",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [220, 0]
+    }
+  ],
+  "connections": {},
+  "settings": {},
+  "active": true
+}
