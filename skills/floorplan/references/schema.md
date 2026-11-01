@@ -355,7 +355,7 @@ The map then has a **Layers** switch that colours every box by its layer, and He
 
 ### Publishability
 
-With layers.json, Health also lists what would keep the system from being published. It's a group of its own, counted apart from the other findings ("Publishability: 5 findings in System, 1 in Setup"), so it never pushes one of them off the list. Every finding names the file and the line, never the value it found:
+With layers.json, Health also lists what would keep the system from being published. It's a group of its own, counted apart from the other findings ("Publishability: 5 findings in System, 1 in Setup"), so it never pushes one of them off the list; a finding marked **Not a problem** on the map leaves that count too. Every finding names the file and the line, never the value it found:
 
 | finding | in | severity |
 |---|---|---|
@@ -367,7 +367,7 @@ With layers.json, Health also lists what would keep the system from being publis
 
 Tests and fixtures are left out of all but the private words: their ids and addresses are usually made up, and a real name in a test is exactly what should be found. Content is never checked.
 
-- **In `graph.json`:** every Health finding, this group included, is `{ id, kind, severity, title, detail, items, notes, locations, fix }`. The `id` is fixed, `<check>` or `<check>:<instance>` (`large-files`, `secret:src/config.py`, `publish:private-word:system`), so a program finds a finding again whatever the language; `title`, `detail` and the `notes` on the cards are in the map's language (`lang`), from the `health.<check>.*` keys of the language table (`docs/i18n.md` in the repository says how they are translated); `fix` is the request to paste into the agent and stays English. A finding never carries a value from the code, only a file, a line and a kind.
+- **In `graph.json`:** every Health finding, this group included, is `{ id, kind, severity, title, detail, items, notes, locations, fix }`. The `id` is fixed, `<check>` or `<check>:<instance>` (`large-files`, `secret:src/config.py`, `publish:private-word:system`), so a program finds a finding again whatever the language; `title`, `detail` and the `notes` on the cards are in the map's language (`lang`), from the `health.<check>.*` keys of the language table (`docs/i18n.md` in the repository says how they are translated); `fix` is the request to paste into the agent and stays English. A finding of this group also has `group: "publish"`, its `layer`, and `finds`, the number of places it counts (`locations` stops at 200). A finding never carries a value from the code, only a file, a line and a kind.
 
 ### The private word list
 
@@ -412,7 +412,7 @@ What a script has to produce: the JSON above, written whole (write to a temporar
 `"git"` in architecture.json says whether the map's files may go in git. Every script that writes the folder reads it and rewrites the folder's own `.gitignore` to match, so the mode lives in architecture.json, not in that file.
 
 - **`"none"`** (the default, and what a missing field means): the `.gitignore` in `floorplan/` ignores everything in the folder, itself included. Nothing of the map is ever committed, and `git status` doesn't show the folder.
-- **`"inputs"`**: the `.gitignore` ignores only what a build writes again: `index.html`, `graph.json`, `artifact.html`, `query.mjs`, `serve.mjs`, `recent-work.json`, `.cache/` and an exported `<project>-map.html`, and `ops.json`, which the owner's tooling rewrites with every run. What is left can be committed: `architecture.json`, `plan.json`, `names.json`, `targets.json`, `rules.json`, `schedules.json`, `layers.json`, `custom-flows.json`, `descriptions/`, `MAP.md` and the `.gitignore` itself. Floorplan only reads and writes files; it never commits anything.
+- **`"inputs"`**: the `.gitignore` ignores only what a build writes again: `index.html`, `graph.json`, `artifact.html`, `query.mjs`, `serve.mjs`, `recent-work.json`, `.cache/` and an exported `<project>-map.html`, and `ops.json`, which the owner's tooling rewrites with every run. What is left can be committed: `architecture.json`, `plan.json`, `names.json`, `targets.json`, `rules.json`, `schedules.json`, `layers.json`, `custom-flows.json`, `health-dismissed.json` (the findings marked **Not a problem**, with their reasons), `descriptions/`, `MAP.md` and the `.gitignore` itself. Floorplan only reads and writes files; it never commits anything.
 
 Any other value is an error with a "did you mean …". When git already tracks files that the folder now ignores, the build prints the `git rm --cached` command that untracks them. If a rule from outside the folder (a `.gitignore` above it, `.git/info/exclude`) ignores `MAP.md`, the build warns that the inputs can't be committed.
 
@@ -429,7 +429,7 @@ Every build writes `floorplan/MAP.md`, whatever `git` says: the map as plain tex
 | `## Schedules` | per schedule, one line: title and id, cron and words with the time zone, trigger, what runs (by name), call, note, source; the switched-off ones last, marked `off` |
 | `## Flows` | per flow: its description, what starts it, the numbered steps (with what you see at one) and what you have in the end |
 | `## What you see` | per place (a phone, a calendar, a database, a mailbox): what arrives there, each sentence with the flow that brings it |
-| `## Health` | one line per finding: severity, title and the number of places. Never a place, a line or a value |
+| `## Health` | one line per finding: severity, title and the number of places. Never a place, a line or a value. A finding marked **Not a problem** on the map comes last, marked as such, without its reason, and is out of the count in the head |
 | `## Recent work` | the tasks of `recent-work.json` and the cards each one touched |
 
 Each section has a marker right above its heading (`<!-- floorplan:parts -->`, `targets`, `rules`, `schedules`, `flows`, `outcomes`, `health`, `recent`), so a program finds it whatever the language. A section with nothing in it says "None.". Text from the code or from people is cut to one line, so it can't add a heading or a marker of its own.

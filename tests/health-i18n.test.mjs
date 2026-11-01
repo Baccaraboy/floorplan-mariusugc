@@ -2,13 +2,14 @@
 // from the language table (health.<check>.* keys) in the language the map is built in, with the fix request staying
 // English. In English a map reads exactly as before: the titles of a sample built with `en` are the ones the code
 // wrote before the table had them. In German nothing English is left, MAP.md lists the German titles, and the Health
-// panel shows them in a real browser.
+// panel shows them in a real browser, where "Not a problem" asks in German and keeps its report to the Floorplan
+// developer English.
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { SKILL, shopApp, run, readGraph, readJson, writeJson, launchBrowser, openMap, cleanup } from './helpers.mjs';
+import { SKILL, shopApp, run, readGraph, readJson, writeJson, launchBrowser, openMap, cleanup, FAKE_PASSWORD } from './helpers.mjs';
 
 // made-up values, put together at run time so nothing id-like is committed
 const UUID = ['0c1f7e2a', '58b4', '4d3e', '9a61', '3f5e2b7c8d90'].join('-');
@@ -175,6 +176,44 @@ test('in the browser the Health panel shows the German findings, and nothing err
     for (const s of ['Code-Check', 'Zuerst beheben', 'Ein geheimer Schlüssel steht in config.js', 'Zwei Schreiber für ein Ziel, das nur einen haben darf: Zahlungen', 'Veröffentlichbarkeit', 'Eine Kennung dieser einen Installation steht im Systemcode', 'Mit Claude beheben']) assert.ok(panel.includes(s), `"${s}" is in the panel`);
     assert.doesNotMatch(panel, /Fix with|written into|single-writer target|looks unused/);
     if (process.env.FLOORPLAN_TEST_SHOTS) await page.screenshot({ path: path.join(process.env.FLOORPLAN_TEST_SHOTS, 'health-de.png'), fullPage: false });
+    assert.deepEqual(errors, []);
+    await page.close();
+  } finally { await browser.close(); }
+});
+
+test('in the browser "Not a problem" asks in German, keeps the report to the developer English, and sets the finding apart', async (t) => {
+  const browser = await launchBrowser();
+  if (!browser) return t.skip('no Playwright with a Chromium in this environment');
+  try {
+    const { page, errors } = await openMap(browser, root);
+    // the report opens a GitHub page for the person to read and send; here it is only caught
+    await page.evaluate(() => { window.open = (...args) => { window.__report = args; }; });
+    const badge = () => page.evaluate(() => document.querySelector('#btn-health .badge')?.textContent || '');
+    const before = Number(await badge());
+    assert.equal(de.health.issues[0].kind, 'secret');
+    await page.click('#btn-health');
+    await page.click('[data-hc-dismiss="0"]');
+    const modal = await page.evaluate(() => document.querySelector('#modal').innerText);
+    for (const s of ['Kein Problem?', `„${de.health.issues[0].title}“ als Fehlalarm`, 'im Code-Check nach unten', 'Sag es auch dem Floorplan-Entwickler', 'Als kein Problem markieren']) assert.ok(modal.includes(s), `"${s}" is in the dialog`);
+    assert.match(await page.getAttribute('#modal .hc-why', 'placeholder'), /^Warum nicht\? \(freiwillig\)/);
+    await page.fill('#modal .hc-why', 'nur ein Beispielwert');
+    await page.check('#modal .hc-rep-on');
+    const preview = await page.textContent('#modal .hc-prev');
+    for (const s of ['**Check:** secret (high)', `**What Floorplan said:** ${de.health.issues[0].title}`, '**File types:** .js', 'nur ein Beispielwert']) assert.ok(preview.includes(s), `"${s}" is in the report`);
+    await page.click('#modal [data-mi="0"]');
+    await page.waitForFunction(() => !document.querySelector('#modal').classList.contains('open'));
+    const [url] = await page.evaluate(() => window.__report);
+    assert.match(url, /^https:\/\/github\.com\/haydenschmitty\/floorplan\/issues\/new\?title=False%20positive%3A%20secret&body=/);
+    assert.ok(!decodeURIComponent(url).includes(FAKE_PASSWORD), 'never the value');
+    assert.equal(await page.textContent('#toast'), 'Als kein Problem markiert. Danke für die Meldung.');
+    let panel = await page.evaluate(() => document.querySelector('#panel').innerText);
+    for (const s of ['Als kein Problem markiert: nur ein Beispielwert', 'Wieder zeigen', 'Ist einer falsch, legt „Kein Problem“ ihn beiseite.']) assert.ok(panel.includes(s), `"${s}" is in the panel`);
+    assert.equal(Number(await badge()), before - 1, 'out of the count');
+    // without the map's server it is kept in this browser, and "Show again" brings it back
+    await page.click('[data-hc-undo="0"]');
+    panel = await page.evaluate(() => document.querySelector('#panel').innerText);
+    assert.ok(!panel.includes('Wieder zeigen'));
+    assert.equal(Number(await badge()), before);
     assert.deepEqual(errors, []);
     await page.close();
   } finally { await browser.close(); }

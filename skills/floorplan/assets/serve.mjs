@@ -34,6 +34,17 @@ if (has('stop')) {
   process.exit(0);
 }
 
+// Health issues marked "not a problem" on the map; build.mjs folds them into graph.json
+const dismissedFile = path.join(here, 'health-dismissed.json');
+const readDismissed = () => { try { const { dismissed } = JSON.parse(fs.readFileSync(dismissedFile, 'utf8')); return Array.isArray(dismissed) ? dismissed : []; } catch { return []; } };
+const cleanDismissal = (d) => ({
+  id: String(d.id).slice(0, 2000),
+  locations: (Array.isArray(d.locations) ? d.locations : []).slice(0, 500).map((l) => String(l).slice(0, 1000)),
+  ...(d.severity ? { severity: String(d.severity).slice(0, 20) } : {}),
+  ...(d.reason ? { reason: String(d.reason).slice(0, 1000) } : {}),
+  at: new Date().toISOString(),
+});
+
 // ---------- export: a copy of the map to share ----------
 // The same self-contained page, marked as exported: no Ask bar, no requests for Claude or Codex, no links into
 // this computer, and only the extras asked for. Used by the map's Export button and by --export.
@@ -57,6 +68,8 @@ function exportMap(include, extraFlows = []) {
   if (!on.includes('flows')) delete out.outcomes; // what you see comes from the flows
   if (!on.includes('recent')) delete out.recent;
   if (!on.includes('health')) delete out.health;
+  // dismissals made since the last build travel with the copy (the page applies them; no reasons, which are notes to self)
+  else if (out.health) { const list = readDismissed().map(({ reason, ...d }) => d); if (list.length) out.health = { ...out.health, dismissed: list }; else delete out.health.dismissed; }
   // what the owner's tooling reported when the map was built (floorplan/ops.json): a snapshot, and its last errors are theirs
   if (!on.includes('ops')) delete out.ops;
   const json = JSON.stringify(out).replace(/<\/(script)/gi, '<\\/$1').replace(/\u2028/g, '\\u2028').replace(/\u2029/g, '\\u2029');
@@ -543,6 +556,22 @@ const server = http.createServer((req, res) => {
           if (req.method === 'POST' && body.flow?.id && Array.isArray(body.flow.steps)) flows.push({ ...body.flow, createdAt: new Date().toISOString() });
           fs.writeFileSync(flowsFile, JSON.stringify({ flows }, null, 2) + '\n');
           res.writeHead(200, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ flows }));
+        });
+        return;
+      }
+    }
+    if (url.pathname === '/api/health/dismissed') {
+      if (req.method === 'GET') { res.writeHead(200, { 'Content-Type': 'application/json' }); return res.end(JSON.stringify({ dismissed: readDismissed() })); }
+      if (req.method === 'POST' || req.method === 'DELETE') {
+        let raw = '';
+        req.on('data', (d) => { raw += d; if (raw.length > 100000) req.destroy(); });
+        req.on('end', () => {
+          let body = {}; try { body = JSON.parse(raw); } catch {}
+          if (typeof body.id !== 'string') { res.writeHead(400); return res.end(); }
+          const dismissed = readDismissed().filter((x) => x.id !== body.id);
+          if (req.method === 'POST') dismissed.push(cleanDismissal(body));
+          fs.writeFileSync(dismissedFile, JSON.stringify({ dismissed }, null, 2) + '\n');
+          res.writeHead(200, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ dismissed }));
         });
         return;
       }

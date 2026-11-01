@@ -166,6 +166,7 @@ const ALLOWED = {
   'Escape': 'a key name the code compares with, not shown',
   'Backspace': 'a key name the code compares with, not shown',
   'Failed to fetch': 'the browser\'s own error message, compared with, not shown',
+  'False positive: ${…}': 'the title of a false-alarm report to the Floorplan developer, a GitHub issue kept in English like the fix requests',
   'Search the map by words. Returns up to 15 items {id, type, name, description, path}. kind optionally limits results to module, file, endpoint or symbol.': 'a tool description for Claude in the Claude app, not shown',
   'Details of one map item by id: its description, parent module, children/files, endpoints, exports, and what it depends on and is used by (with ids).': 'a tool description for Claude in the Claude app, not shown',
   'Shortest chain of imports/HTTP calls from anything inside one item to anything inside another. Returns hops with ids.': 'a tool description for Claude in the Claude app, not shown',

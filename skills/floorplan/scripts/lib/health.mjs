@@ -65,7 +65,8 @@ const FORMATS = [
   { re: /\bsk-ant-[a-z]+\d*-[A-Za-z0-9_\-]{40,}/g, what: 'anthropic-key', svc: 'Anthropic', live: true },
   { re: /\bsk-(?:proj-|svcacct-|admin-)?[A-Za-z0-9_\-]{16,}T3BlbkFJ[A-Za-z0-9_\-]{16,}/g, what: 'openai-key', svc: 'OpenAI', live: true },
   { re: /\bsk-(?:proj|svcacct|admin)-[A-Za-z0-9_\-]{40,}/g, what: 'openai-key', svc: 'OpenAI', live: true },
-  { re: /-----BEGIN (?:RSA |EC |DSA |OPENSSH |PGP |ENCRYPTED )?PRIVATE KEY(?: BLOCK)?-----/g, what: 'private-key', svc: null, whole: true },
+  // (a passphrase-protected key, ENCRYPTED PRIVATE KEY or Proc-Type: 4,ENCRYPTED, is left alone: see encryptedKeyAt)
+  { re: /-----BEGIN (?:RSA |EC |DSA |OPENSSH |PGP )?PRIVATE KEY(?: BLOCK)?-----/g, what: 'private-key', svc: null, whole: true },
   { re: /\bSG\.[A-Za-z0-9_\-]{22}\.[A-Za-z0-9_\-]{43}\b/g, what: 'sendgrid-key', svc: 'SendGrid', live: true },
   { re: /\bsq0csp-[0-9A-Za-z_\-]{40,}/g, what: 'square-secret', svc: 'Square', live: true },
   { re: /\bsq0atp-[0-9A-Za-z_\-]{20,}/g, what: 'square-token', svc: 'Square', live: true },
@@ -105,8 +106,21 @@ const kindFromName = (name) => {
 // is a password or short
 const mask = (v, password) => (password || v.length < 12 ? { len: v.length } : { start: v.slice(0, 4), len: v.length });
 
+// A stored password hash isn't the password: bcrypt / argon2 / scrypt / crypt(3) ($2b$…, $argon2id$…,
+// $6$…), Django's pbkdf2_sha256$…, LDAP's {SSHA}…, and anything kept under a name that says it's a hash.
+const HASHED_VALUE = /^\$(2[abxy]?|argon2(id|i|d)|scrypt|pbkdf2[\w-]*|[156]|y|7|sha\d*|md5)\$|^(pbkdf2_sha\d+|bcrypt(_sha256)?|argon2|scrypt|sha1|md5)\$|^\{(S?SHA\d*|SMD5|CRYPT|PBKDF2[\w-]*)\}/i;
+// (HASH_SECRET, PASSWORD_HASH_KEY and HASH_SALT are the secret that makes the hash, so they don't count.)
+const HASHED_NAME = /(^|_)(hash|hashed|hashes|digest|bcrypt|argon2?|scrypt|pbkdf2)(_(?!.*(secret|key|salt|pepper|token))|$)/i;
+// Encrypted values are safe to commit (that's the point): dotenvx's encrypted:…, sops' ENC[AES256_GCM,…],
+// Ansible Vault, AWS KMS ciphertext, HashiCorp Vault transit (vault:v1:…), age and PGP armour, OpenSSL's
+// "Salted__" (U2FsdGVkX1…) and Python's Fernet (gAAAAA…).
+const ENCRYPTED_VALUE = /^encrypted:[A-Za-z0-9+/=_-]{20,}|^ENC\[[A-Z0-9_]+,data:|^\$ANSIBLE_VAULT;|^!vault\b|^AQICAH[A-Za-z0-9+/=]{40,}$|^vault:v\d+:|^-----BEGIN (AGE ENCRYPTED FILE|PGP MESSAGE)-----|^U2FsdGVkX1[A-Za-z0-9+/=]{10,}|^gAAAAA[A-Za-z0-9_=-]{40,}/;
+/** A value that's a password hash or ciphertext rather than the secret itself. */
+export const protectedValue = (v, name = '') => ENCRYPTED_VALUE.test(v) || HASHED_VALUE.test(v) || HASHED_NAME.test(snake(name));
+
 function valueLooksReal(v, name) {
   if (/\s/.test(v) || PLACEHOLDER.test(v)) return false;
+  if (protectedValue(v, name)) return false;
   if (/^(none|null|nil|undefined|true|false|string|number|text|required|optional|bearer|basic|secret|token|password|test|dev|development|local|admin)$/i.test(v)) return false;
   if (/^[A-Z][A-Z0-9_]+$/.test(v)) return false;                 // the NAME of an env var
   if (/^env\([A-Za-z_][\w]*\)$/.test(v)) return false;           // Supabase config.toml reading one: "env(S3_SECRET_KEY)"
@@ -135,6 +149,11 @@ function docLines(src, lang) {
   return set;
 }
 
+/** A PEM private key block starting at `idx` that is passphrase-protected (legacy OpenSSL headers). */
+const encryptedKeyAt = (src, idx) => /^[^\n]*\n(?:[^\n]*\n)?\s*Proc-Type:\s*4,\s*ENCRYPTED/.test(src.slice(idx, idx + 300));
+/** A key file's head holds a private key that isn't passphrase-protected. */
+const plainKeyIn = (head) => [...head.matchAll(/-----BEGIN ([A-Z ]*)PRIVATE KEY(?: BLOCK)?-----/g)].some((m) => !/ENCRYPTED/.test(m[1]) && !encryptedKeyAt(head, m.index));
+
 function findSecrets(src, f, out) {
   const at = lineIndex(src);
   const isTest = TEST_FILE.test(f.path) || EXAMPLE_FILE.test(f.path);
@@ -147,6 +166,7 @@ function findSecrets(src, f, out) {
       const v = m[0];
       if (isTest && (!fm.live || fm.whole)) continue;
       if (!fm.whole && (/EXAMPLE|xxxx|XXXX|0{10,}/.test(v) || entropy(v) < 3)) continue;
+      if (fm.whole && encryptedKeyAt(src, m.index)) continue;
       add(at(m.index), { what: fm.what, svc: fm.svc, sev: fm.sev || 'high', hint: fm.whole ? { block: true } : mask(v) });
     }
   }
@@ -404,7 +424,7 @@ export function leakyPublicVar(name) {
   const m = PUBLIC_PREFIX.exec(name);
   if (!m) return null;
   const rest = name.slice(m[0].length);
-  if (PUBLIC_BY_DESIGN.test(rest)) return null;
+  if (PUBLIC_BY_DESIGN.test(rest) || HASHED_NAME.test(rest)) return null;
   const svc = PRIVATE_SERVICE.exec(rest)?.[2];
   if (svc && KEYISH.test(rest)) return SERVICE_LABEL[svc] || svc.charAt(0) + svc.slice(1).toLowerCase();
   if (PRIVATE_NAME.test(rest)) return /SERVICE_ROLE|SERVICE_KEY/.test(rest) ? 'Supabase' : '';
@@ -612,7 +632,7 @@ export function buildHealth({ graph, scan, arch, root, layers, words, lang }) {
     if (!/\.(pem|key|p12|pfx|jks|keystore)$|^id_(rsa|dsa|ecdsa|ed25519)$|service[-_]?account.*\.json$|^credentials?\.json$|firebase-adminsdk.*\.json$|^client_secret.*\.json$|-key\.json$/i.test(base)) continue;
     let head = '';
     try { head = readHead(path.join(root, f.path), 65536); } catch { continue; }
-    if (/PRIVATE KEY|"private_key"\s*:\s*"-----|"client_secret"\s*:\s*"[^"]{8,}/.test(head) || /\.(p12|pfx|jks|keystore)$/i.test(base)) secretFiles.push({ path: f.path, list: [{ k: 'secret', line: 1, what: 'credentials-file', sev: 'high', hint: { file: true } }], file: true });
+    if (plainKeyIn(head) || /"private_key"\s*:\s*"-----|"client_secret"\s*:\s*"[^"]{8,}/.test(head) || /\.(p12|pfx|jks|keystore)$/i.test(base)) secretFiles.push({ path: f.path, list: [{ k: 'secret', line: 1, what: 'credentials-file', sev: 'high', hint: { file: true } }], file: true });
   }
   const secretIssue = (group) => {
     const locations = [], notes = {}, items = [];
@@ -718,9 +738,13 @@ export function buildHealth({ graph, scan, arch, root, layers, words, lang }) {
     try { src = readHead(path.join(root, f.path), 262144); } catch { continue; }
     src.split('\n').forEach((t, i) => {
       const m = /^\s*(?:export\s+)?([A-Z][A-Z0-9_]*)\s*=\s*["']?([^"'#\s]*)/.exec(t);
-      if (m && m[2] && !PLACEHOLDER.test(m[2]) && !/^\$/.test(m[2]) && leakyPublicVar(m[1]) !== null) publicVar(m[1]).defs.push({ file: f.path, line: i + 1 });
+      if (!m || !m[2] || leakyPublicVar(m[1]) === null) return;
+      // VITE_ADMIN_PASSWORD=$2b$12$… is a hash (or ciphertext), not the password
+      if (protectedValue(m[2], m[1])) publicVar(m[1]).protected = true;
+      else if (!PLACEHOLDER.test(m[2]) && !/^\$/.test(m[2])) publicVar(m[1]).defs.push({ file: f.path, line: i + 1 });
     });
   }
+  for (const [name, v] of publicVars) if (v.protected && !v.defs.length) publicVars.delete(name);
   if (publicVars.size) {
     const vars = [...publicVars.values()];
     const browserSide = (p) => isFrontend(p) || /\.(jsx|tsx|vue|svelte|astro)$/.test(p);
@@ -1413,12 +1437,37 @@ function publishIssues({ scan, root, layers, itemFor, nameOf, findings, t, tn, e
     out.push({
       id: `publish:${kind}:${layer}`, kind, severity: text.severity, group: 'publish', layer,
       title: text.title, detail: text.detail, items: shown, notes,
-      locations: all.slice(0, 200).map(({ file, line }) => ({ file, line })),
+      // finds: how many places it counts into summary[layer] (locations stops at 200), so a dismissal can take them out
+      finds: n, locations: all.slice(0, 200).map(({ file, line }) => ({ file, line })),
       fix: text.fix.join('\n'),
     });
   }
   out.sort((a, b) => SEV_ORDER[a.severity] - SEV_ORDER[b.severity] || PUBLISH_ORDER.indexOf(a.kind) - PUBLISH_ORDER.indexOf(b.kind) || (a.layer === 'system' ? -1 : 1));
   return { issues: out, summary };
+}
+
+// ---------- "not a problem": issues people dismissed from the Health panel ----------
+// serve.mjs saves them to floorplan/health-dismissed.json as { dismissed: [{ id, locations: ['file:line'], reason, at }] }.
+// A dismissal covers the issue as it was: it shows again if it gets more or less serious, or finds something new
+// in a file. It counts per file, not per line, so an edit higher up the file doesn't bring it back.
+// (assets/ui/20-health.js has the same rule for the page.)
+export function dismissalFor(issue, list) {
+  const d = (list || []).find((x) => x && x.id === issue.id);
+  if (!d || (d.severity && d.severity !== issue.severity)) return null;
+  const left = new Map();
+  for (const loc of d.locations || []) { const f = String(loc).replace(/:[^:]*$/, ''); left.set(f, (left.get(f) || 0) + 1); }
+  for (const l of issue.locations || []) { const n = left.get(l.file) || 0; if (!n) return null; left.set(l.file, n - 1); }
+  return d;
+}
+/** Folds a dismissal list into a built health result: keeps the list, recounts the summary without them. */
+export function withDismissed(health, list) {
+  const dismissed = (Array.isArray(list) ? list : []).filter((x) => x && typeof x.id === 'string');
+  const summary = { high: 0, medium: 0, low: 0 };
+  for (const i of health.issues) if (i.group !== 'publish' && !dismissalFor(i, dismissed)) summary[i.severity]++;
+  // Publishability stays out of the summary: it counts its finds by layer, so those are recounted the same way
+  const publish = health.publish && { ...health.publish, system: 0, config: 0 };
+  if (publish) for (const i of health.issues) if (i.group === 'publish' && !dismissalFor(i, dismissed)) publish[i.layer] += i.finds ?? i.locations.length;
+  return { ...health, summary, ...(publish ? { publish } : {}), ...(dismissed.length ? { dismissed } : {}) };
 }
 
 /** Test mode, in Firestore/Storage rules (request.time < timestamp.date(Y, M, D)) or Realtime Database rules (now < ms). */

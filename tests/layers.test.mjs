@@ -350,7 +350,8 @@ function standIn(g, lang = 'en', store = {}) {
     info, nodes, files, routes: g.routes, exists: (id) => id.startsWith('n:') ? nodes.has(id.slice(2)) : files.has(id.slice(2)), chain,
     icon: () => '<svg></svg>', iconI: () => '<svg></svg>', icons: {}, technical: () => false, state: { chipEls: new Map(), edgeEls: new Map(), layout: { children: [] } },
     store: { get: (k, d) => (k in store ? store[k] : d), set: (k, v) => { store[k] = v; } },
-    addHeaderButton: (b) => { const e = el(); out.buttons.push({ ...b, el: e }); return e; },
+    // like the viewer's: a header button holds its icon as svg.i, which Health swaps for a check mark when all is calm
+    addHeaderButton: (b) => { const e = el(), icon = el(); e.querySelector = (sel) => (sel === 'svg.i' ? icon : null); out.buttons.push({ ...b, el: e }); return e; },
     addPanelSection: (where, fn) => out.sections[where].push(fn),
     showPanel: (html) => out.panels.push(html), closePanel() {}, refreshPanel: () => out.refreshed++, showBoard: (b) => { out.board = b; }, on: (ev, fn) => (out.listeners[ev] ||= []).push(fn),
     toast() {}, modal() {}, copy() {}, canChange: () => false,
@@ -443,6 +444,37 @@ test('the Health panel shows Publishability as its own group, with the count by 
   assert.equal(btn.el.children.find((c) => c.className === 'badge')?.textContent, String(urgent));
   const ov = s.out.sections.overview.map((fn) => fn()).find(Boolean).html;
   assert.ok(ov.includes('Publishability') && ov.includes(`${n} findings in System, 1 in Setup`));
+});
+
+test('a Publishability finding marked "not a problem" leaves its count by layer, never the usual summary, and goes to the end of the list', () => {
+  const r = layeredShop();
+  try {
+    writeJson(layersFile(r), layersOf());
+    scanAndBuild(r);
+    const first = readGraph(r).health;
+    const issue = publish({ health: first }, 'hardcoded-identifier');
+    assert.equal(issue.finds, issue.locations.length, 'each finding says how many places it counts');
+    assert.equal(first.publish.system, first.issues.filter((i) => i.group === 'publish' && i.layer === 'system').reduce((s, i) => s + i.finds, 0));
+    writeJson(path.join(r, 'floorplan', 'health-dismissed.json'), { dismissed: [{ id: issue.id, severity: issue.severity, locations: places(issue), reason: 'a fixed id of a public service' }] });
+    const out = build(r);
+    const g = readGraph(r);
+    assert.deepEqual(g.health.summary, first.summary, 'the usual checks count as before');
+    assert.deepEqual(g.health.publish, { ...first.publish, system: first.publish.system - issue.finds });
+    assert.equal(g.health.issues.length, first.issues.length, 'it stays listed');
+    assert.match(out, new RegExp(`PUBLISHABILITY {2}${first.publish.system - issue.finds} findings in system, 1 in config\\n`));
+    assert.ok(!out.includes(`] ${issue.title}`), 'the build report leaves it out');
+    // the panel: out of its group and the group's count, at the end with its reason; the badge counts the usual checks
+    const s = runUi('20-health.js', standIn(g));
+    s.out.buttons[0].onClick();
+    const html = s.out.panels.at(-1);
+    const marked = html.indexOf('Marked as not a problem <span class="c">1</span>');
+    assert.ok(marked > html.indexOf('Publishability'), 'the marked ones come last');
+    assert.ok(html.indexOf(issue.title) > marked, 'and it is among them');
+    assert.ok(html.includes(`${first.publish.system - issue.finds} findings in System, 1 in Setup`));
+    assert.ok(html.includes('Marked as not a problem: a fixed id of a public service') && html.includes('Show again'));
+    const urgent = g.health.issues.filter((i) => i.group !== 'publish' && i.severity !== 'low').length;
+    assert.equal(s.out.buttons[0].el.children.find((c) => c.className === 'badge')?.textContent, String(urgent));
+  } finally { cleanup(r); }
 });
 
 test('an exported copy keeps the layers; Publishability goes along only with Health', () => {

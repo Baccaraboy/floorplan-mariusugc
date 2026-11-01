@@ -2,7 +2,8 @@
 // structure before they build. build.mjs writes it next to graph.json, in the map's language: the head (project,
 // state, size), every part with its key files and endpoints, who writes where, the rules and decisions, the schedules,
 // the flows, what you see (what arrives at each place, and from which flow), the Health findings (a title and a count,
-// never a place or a value) and the recent work. The eight sections and their order never change, and a marker
+// never a place or a value; the ones marked "not a problem" come last, without the reason) and the recent work. The
+// eight sections and their order never change, and a marker
 // (<!-- floorplan:parts --> …) sits right above each heading, so a program finds a section without knowing the
 // language. The file stays under 1,500 lines however big the map is: the lists shrink step by step and end in "… and
 // N more". Whatever comes from the code or from a person is flattened to
@@ -11,6 +12,7 @@
 // "inputs"), so it holds nothing that changes with every edit: no lines of code, and a stamp (the day and commit it was
 // written) that build.mjs leaves as it was when nothing else changed.
 import { translator } from './lang.mjs';
+import { dismissalFor } from './health.mjs';
 
 export const MAX_LINES = 1500;
 
@@ -216,8 +218,11 @@ export function buildMapMd(graph, { words, dir = 'floorplan', inputs = [], maxLi
     ...(list.length > CAP.seen ? [`- ${more(list.length - CAP.seen)}`] : []),
   ];
   // Health: a title and a count. Where the findings are, their notes and the fixes stay in graph.json and the map.
+  // One marked "not a problem" on the map (graph.health.dismissed) is out of the count, so it comes last and says so,
+  // as on the map; its reason is a note to self and stays out.
   const SEVERITIES = [['high', t('health.sev.high.word')], ['medium', t('health.sev.medium.word')], ['low', t('health.sev.low.word')]];
-  const issues = [...(graph.health?.issues || [])].sort((a, b) => SEVERITIES.findIndex(([s]) => s === a.severity) - SEVERITIES.findIndex(([s]) => s === b.severity));
+  const marked = (i) => !!dismissalFor(i, graph.health?.dismissed);
+  const issues = [...(graph.health?.issues || [])].sort((a, b) => marked(a) - marked(b) || SEVERITIES.findIndex(([s]) => s === a.severity) - SEVERITIES.findIndex(([s]) => s === b.severity));
   const sums = graph.health?.summary || Object.fromEntries(SEVERITIES.map(([s]) => [s, issues.filter((i) => i.severity === s).length]));
   const healthSum = `${bp ? t('health.review') : t('health.title')}: ${SEVERITIES.map(([s, word]) => t('health.sevCount', { n: sums[s] || 0, word })).join(' · ')}`;
   // some titles already end in "(3 places)", in the table's own words for a count of places: say it once
@@ -226,7 +231,7 @@ export function buildMapMd(graph, { words, dir = 'floorplan', inputs = [], maxLi
   const findingLine = (i) => {
     const places = i.locations?.length || i.items?.length || 0;
     const word = SEVERITIES.find(([s]) => s === i.severity)?.[1] ?? oneLine(i.severity);
-    return `- [${word}] ${oneLine(i.title).replace(placesSuffix, '')}${places ? ` (${tn('count.place', places)})` : ''}`;
+    return `- [${word}] ${oneLine(i.title).replace(placesSuffix, '')}${places ? ` (${tn('count.place', places)})` : ''}${marked(i) ? ` · ${t('map.dismissed')}` : ''}`;
   };
   const recent = graph.recent;
   const recentChange = (it) => withText(`${it.change === 'new' ? t('recent.new') : t('recent.changed')}: ${refText(it.id)}`, clip(oneLine(it.note), 200));
