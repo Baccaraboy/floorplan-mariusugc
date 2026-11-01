@@ -355,7 +355,7 @@ The map then has a **Layers** switch that colours every box by its layer, and He
 
 ### Publishability
 
-With layers.json, Health also lists what would keep the system from being published. It's a group of its own, counted apart from the other findings ("Publishability: 5 findings in System, 1 in Setup"), so it never pushes one of them off the list. Every finding names the file and the line, never the value it found:
+With layers.json, Health also lists what would keep the system from being published. It's a group of its own, counted apart from the other findings ("Publishability: 5 findings in System, 1 in Setup"), so it never pushes one of them off the list; a finding marked **Not a problem** on the map leaves that count too. Every finding names the file and the line, never the value it found:
 
 | finding | in | severity |
 |---|---|---|
@@ -367,7 +367,7 @@ With layers.json, Health also lists what would keep the system from being publis
 
 Tests and fixtures are left out of all but the private words: their ids and addresses are usually made up, and a real name in a test is exactly what should be found. Content is never checked.
 
-- **In `graph.json`:** every Health finding, this group included, is `{ id, kind, severity, title, detail, items, notes, locations, fix }`. The `id` is fixed, `<check>` or `<check>:<instance>` (`large-files`, `secret:src/config.py`, `publish:private-word:system`), so a program finds a finding again whatever the language; `title`, `detail` and the `notes` on the cards are in the map's language (`lang`), from the `health.<check>.*` keys of the language table (`docs/i18n.md` in the repository says how they are translated); `fix` is the request to paste into the agent and stays English. A finding never carries a value from the code, only a file, a line and a kind.
+- **In `graph.json`:** every Health finding, this group included, is `{ id, kind, severity, title, detail, items, notes, locations, fix }`. The `id` is fixed, `<check>` or `<check>:<instance>` (`large-files`, `secret:src/config.py`, `publish:private-word:system`), so a program finds a finding again whatever the language; `title`, `detail` and the `notes` on the cards are in the map's language (`lang`), from the `health.<check>.*` keys of the language table (`docs/i18n.md` in the repository says how they are translated); `fix` is the request to paste into the agent and stays English. A finding of this group also has `group: "publish"`, its `layer`, and `finds`, the number of places it counts (`locations` stops at 200). A finding never carries a value from the code, only a file, a line and a kind.
 
 ### The private word list
 
