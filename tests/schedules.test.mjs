@@ -281,7 +281,7 @@ test('the start minutes of one day: the series for a plan that runs any day, non
 test('MAP.md has a Schedules section with its marker after Rules: one line per plan, the switched-off ones last', () => {
   const md = mapOf(root);
   const markers = md.split('\n').filter((l) => /^<!-- floorplan:\w+ -->$/.test(l));
-  assert.deepEqual(markers, ['parts', 'targets', 'rules', 'schedules', 'flows', 'health', 'recent'].map((s) => `<!-- floorplan:${s} -->`));
+  assert.deepEqual(markers, ['parts', 'targets', 'rules', 'schedules', 'flows', 'outcomes', 'health', 'recent'].map((s) => `<!-- floorplan:${s} -->`));
   const sec = section(md);
   assert.match(sec, /^<!-- floorplan:schedules -->\n## Schedules\n/);
   const lines = sec.split('\n').filter((l) => l.startsWith('- '));

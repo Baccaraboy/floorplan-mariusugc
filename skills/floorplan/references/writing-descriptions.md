@@ -144,6 +144,17 @@ The default audience is `"everyone"`. Write as if explaining the app to its owne
 
 For `"developers"`, the ✗ column is closer to right (minus the filler). Same rules otherwise: one sentence, verb first, specific.
 
+### What you see
+
+A flow's `trigger`, a step's `you_see` and the flow's `outcome` ([schema.md](schema.md#what-you-see)) are written from the owner's side of the screen, whatever the audience: an outcome describes what the person sees, not what the code does. "A message on your phone with the customer's name", not "sends the Telegram payload"; "A new row in your orders list, marked unpaid", not "inserts into orders with status=open". Name the place as they know it (your phone, your calendar, your inbox, the orders list), say what the thing says or shows, and give one short, made-up `example` when it helps ("Order #1234 received"), never a real customer or a secret. The trigger is the same: "The customer presses «Buy»", "Every night at half past two", "A brand writes to the shop's mailbox", in the words the owner would use.
+
+| | |
+|---|---|
+| ✗ | outcome "Telegram sendMessage with the deal payload." |
+| ✓ | outcome "A message on your phone: who asked, what they want, and the price the app proposes." |
+| ✗ | trigger "Cron 30 2 * * * → report job" |
+| ✓ | trigger kind `schedule`, "Every night at half past two the report runs on its own" (with `"schedule": "actions-report"`, so the map shows the exact time) |
+
 ## How to work
 
 1. Read the worksheet. It lists each file's definitions, docstrings, what it uses and what uses it, and each route's handler. That's enough for most files.

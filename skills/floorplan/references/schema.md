@@ -2,7 +2,7 @@
 
 `floorplan/architecture.json` describes the structure: subsystems, modules, external services, flows. Names and descriptions for individual files and routes go in `floorplan/descriptions/*.json` instead (see [writing-descriptions.md](writing-descriptions.md)). They're kept separate so parallel agents can write them without conflicts. `build.mjs` checks both against the scan and reports problems by field.
 
-Contents: [Top level](#top-level) · [nodes](#nodes) · [Assignment rules](#how-files-get-assigned) · [edges](#edges) · [annotations](#annotations) · [flows](#flows) · [Recent work](#recent-work) · [Fixed names](#fixed-names) · [Targets](#targets) · [Rules and decisions](#rules-and-decisions) · [Schedules](#schedules) · [Layers](#layers) · [Operations](#operations) · [git](#git) · [Full example](#full-example)
+Contents: [Top level](#top-level) · [nodes](#nodes) · [Assignment rules](#how-files-get-assigned) · [edges](#edges) · [annotations](#annotations) · [flows](#flows) ([What you see](#what-you-see)) · [Recent work](#recent-work) · [Fixed names](#fixed-names) · [Targets](#targets) · [Rules and decisions](#rules-and-decisions) · [Schedules](#schedules) · [Layers](#layers) · [Operations](#operations) · [git](#git) · [Full example](#full-example)
 
 ## Top level
 
@@ -101,6 +101,33 @@ An edge between two external nodes (a database that notifies a mail service, a s
 - Each step's `node` is a node id or a file path. There must be at least 2 steps.
 - The viewer moves to the board where each pair of consecutive steps is visible and animates a signal between them.
 - Write the notes as a narration a new engineer would want.
+
+### What you see
+
+A flow tells which parts work one after the other. For the owner, who may not be an engineer, two things are missing: **what starts it** (a click, a clock, a mail, a webhook) and **what they see of it** (a message on their phone, an entry in their calendar, a new record in their database, a draft in their inbox). Three optional fields add them, and the map turns them round into a **What you see** panel: per place, what arrives there and from which flow.
+
+```json
+{ "id": "order", "title": "An order comes in",
+  "trigger": { "kind": "click", "text": "The customer presses «Buy»", "node": "web.pages" },
+  "steps": [
+    { "node": "api.routes", "note": "Checks the cart and creates the order",
+      "you_see": { "where": "x.mail", "text": "A confirmation mail in your inbox", "example": "Order #1234 received" } },
+    { "node": "stripe", "note": "Charges the card" }
+  ],
+  "outcome": { "where": "x.mail", "text": "The customer has a confirmation, you have the order in the admin list." } }
+```
+
+| field | type | meaning |
+|---|---|---|
+| `trigger` | object | optional: what starts the flow. `kind` (required): `click` · `schedule` · `message` · `webhook` · `file` · `manual` · `other`. `text` (required): in plain words. `node` (optional): where it starts, a node id or a file path. `schedule` (optional): the id of a schedule from the [Clock](#schedules) (one the scan found, like `actions-report`, or one in schedules.json); the flow then shows the schedule's words ("daily at 02:30") and time zone |
+| `steps[].you_see` | object | optional: what the owner sees at this step. `where` (required): the place, a node id or a file path, usually an external node (a phone, a calendar, a database, a mailbox). `text` (required): one sentence on what they see. `example` (optional): one short line, like the message as it would read. Never a secret |
+| `outcome` | object | optional: what the owner has when the flow is done, with the same `where`, `text` and `example` |
+
+- **Checked like the steps:** an unknown `where`, `node` or `schedule`, an unknown `kind` or field, and a missing `text` are errors with a "did you mean …".
+- **In `graph.json`:** the flow keeps `trigger` (with `node` as a card, and `when`, `tz` and `cron` from the schedule), each step its `you_see` and the flow its `outcome`, every `where` as a card (`n:…`, `f:…`). `graph.outcomes` is the index by place: `{ "n:x.mail": [{ "flow": "order", "step": 0, "text": "…", "example": "…" }, { "flow": "order", "text": "…" }] }`, an entry without `step` being the flow's outcome. The build reports `FLOWS  N · with trigger a · with outcome b · outcomes at c place(s)`.
+- **On the map:** the flow list and the guided view show the trigger at the top ("Starts when: …", with a clock and the schedule's words for a `schedule`), an eye card "You see: …" with the example at a step that has one, and "In the end: …" at the last step. A **What you see** button opens the panel: every place with what arrives there and the flow that brings it, and a sentence opens that flow at its step; a place's own card lists **What arrives here**.
+- **In `MAP.md`:** each flow gets a `Trigger:` line and a `You see:` line (its outcome), a step with `you_see` says so on its line, and a `## What you see` section after Flows lists the sentences by place, each with its flow's title in brackets.
+- **Write it from the owner's side:** what they see, not what the code does. "A message on your phone with the customer's name", not "sends the Telegram payload" ([writing-descriptions.md](writing-descriptions.md#what-you-see)). A flow without these fields is shown exactly as before.
 
 ## recent work
 
@@ -398,11 +425,12 @@ Every build writes `floorplan/MAP.md`, whatever `git` says: the map as plain tex
 | `## Targets` | per target: kind, policy, writers, readers, the note, calls the Health check found that targets.json doesn't list; a target with more writers than its policy allows is marked |
 | `## Rules` | per rule or decision: kind, status and dates, where it applies (the names of the parts, targets and files, up to 8), the text in one line, the source; the retired ones last |
 | `## Schedules` | per schedule, one line: title and id, cron and words with the time zone, trigger, what runs (by name), call, note, source; the switched-off ones last, marked `off` |
-| `## Flows` | per flow: its description and numbered steps |
+| `## Flows` | per flow: its description, what starts it, the numbered steps (with what you see at one) and what you have in the end |
+| `## What you see` | per place (a phone, a calendar, a database, a mailbox): what arrives there, each sentence with the flow that brings it |
 | `## Health` | one line per finding: severity, title and the number of places. Never a place, a line or a value |
 | `## Recent work` | the tasks of `recent-work.json` and the cards each one touched |
 
-Each section has a marker right above its heading (`<!-- floorplan:parts -->`, `targets`, `rules`, `schedules`, `flows`, `health`, `recent`), so a program finds it whatever the language. A section with nothing in it says "None.". Text from the code or from people is cut to one line, so it can't add a heading or a marker of its own.
+Each section has a marker right above its heading (`<!-- floorplan:parts -->`, `targets`, `rules`, `schedules`, `flows`, `outcomes`, `health`, `recent`), so a program finds it whatever the language. A section with nothing in it says "None.". Text from the code or from people is cut to one line, so it can't add a heading or a marker of its own.
 
 ## Full example
 

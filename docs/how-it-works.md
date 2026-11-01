@@ -49,7 +49,7 @@ Claude or Codex reads the scan summary, READMEs, setup files and entry points, t
 - the main parts of your app, each with a plain summary;
 - the outside services it really talks to (databases, payment providers, email);
 - connections the scan can't see, like queues, scheduled jobs and webhooks;
-- a few guided flows and a "Start here" tour.
+- a few guided flows and a "Start here" tour. A flow can say what starts it (a click, a clock, a message, a webhook, a file, a hand), what the owner sees at a step and what they have in the end, each at a place on the map (a phone, a calendar, a database, a mailbox), written from the owner's side rather than the code's.
 
 The build then assigns every file to the deepest part whose patterns match, and reports anything left over.
 
@@ -66,10 +66,11 @@ By default everything is written for the app's owner, not an engineer: what each
 - with a `layers.json`, sorts every file into the system, the setup and the content, and checks what would keep the system from being published;
 - with a `rules.json`, hangs the rules and dated decisions the project documents (each with its source, never made up) on the parts, files, endpoints and targets they apply to, so a card shows the rules that hold there and a rule shows where it holds; a retired rule that still names places is a minor Health finding;
 - merges the schedules the scan found with a `schedules.json` (what each one runs, better titles, the ones the scan can't see, the ones to switch off), puts every cron into words in the map's language, works out the start minutes of one day for the Clock's strip, and draws an event line from a schedule's trigger to what it runs when both are on the map;
+- checks each flow's trigger, what you see and outcome like its steps (a trigger that names a schedule gets the Clock's words), and turns them round into `graph.outcomes`: per place, what arrives there and from which flow, which the map shows as a **What you see** panel and as **What arrives here** on the place's card;
 - runs the **Health** check;
 - detects **screens**: Next.js, React Router, Vue, SvelteKit, Remix, Nuxt, Astro, Expo, Angular, TanStack;
 - writes `graph.json` and the self-contained `index.html`, noting whether Claude Code or Codex made it, so the map's Ask bar and fix prompts name the right one;
-- writes `MAP.md`, the same map as plain text for AI workers that start in the repo (the parts, who writes where, the rules and decisions, the schedules, the flows, Health and the recent work), and, if the project sets `"git": "inputs"`, keeps the folder's `.gitignore` to ignore only what a build writes again, so the inputs and `MAP.md` can be committed ([how](project-files.md#keeping-the-inputs-in-git)).
+- writes `MAP.md`, the same map as plain text for AI workers that start in the repo (the parts, who writes where, the rules and decisions, the schedules, the flows with what starts them and what you see, what arrives at each place, Health and the recent work), and, if the project sets `"git": "inputs"`, keeps the folder's `.gitignore` to ignore only what a build writes again, so the inputs and `MAP.md` can be committed ([how](project-files.md#keeping-the-inputs-in-git)).
 
 The map lays itself out in your browser with [ELK](https://eclipse.dev/elk/), so the build itself is fast.
 

@@ -1,10 +1,11 @@
 // MAP.md: the map as plain text, for the AI workers (Claude Code, Codex …) that start in the repo and need the
 // structure before they build. build.mjs writes it next to graph.json, in the map's language: the head (project,
 // state, size), every part with its key files and endpoints, who writes where, the rules and decisions, the schedules,
-// the flows, the Health findings (a title and a count, never a place or a value) and the recent work. The seven
-// sections and their order never change, and a marker (<!-- floorplan:parts --> …) sits right above each heading, so a
-// program finds a section without knowing the language. The file stays under 1,500 lines however big the map is: the
-// lists shrink step by step and end in "… and N more". Whatever comes from the code or from a person is flattened to
+// the flows, what you see (what arrives at each place, and from which flow), the Health findings (a title and a count,
+// never a place or a value) and the recent work. The eight sections and their order never change, and a marker
+// (<!-- floorplan:parts --> …) sits right above each heading, so a program finds a section without knowing the
+// language. The file stays under 1,500 lines however big the map is: the lists shrink step by step and end in "… and
+// N more". Whatever comes from the code or from a person is flattened to
 // one line first, so it can't add a heading, a list item or a marker of its own. The words come from the language table
 // (map.* and a few keys the viewer shares), never from this file. The file is meant to be committed (with "git":
 // "inputs"), so it holds nothing that changes with every edit: no lines of code, and a stamp (the day and commit it was
@@ -25,7 +26,7 @@ const STEPS = [
   { files: 0, routes: 0 },
 ];
 // The other sections have caps of their own, so together they take a third of the file at most.
-const CAP = { targets: 25, listed: 12, undeclared: 6, rules: 40, places: 8, schedules: 40, flows: 10, steps: 12, health: 40, tasks: 10, items: 8, paths: 12 };
+const CAP = { targets: 25, listed: 12, undeclared: 6, rules: 40, places: 8, schedules: 40, flows: 10, steps: 12, outcomes: 30, seen: 12, health: 40, tasks: 10, items: 8, paths: 12 };
 
 const SEPARATORS = String.fromCharCode(0x2028, 0x2029);
 const CONTROL = new RegExp(`[\\x00-\\x1f\\x7f-\\x9f${SEPARATORS}]+`, 'g');
@@ -191,18 +192,32 @@ export function buildMapMd(graph, { words, dir = 'floorplan', inputs = [], maxLi
     if (!s.enabled) parts.push(t('clock.off'));
     return `- ${parts.join(' · ')}`;
   };
+  // what you see at a place: the sentence, the place, and an example when there is one
+  const seenText = (v) => `${t('outcomes.youSee')}: ${clip(oneLine(v.text), 200)} (${refText(v.where)})${v.example ? ` · ${t('outcomes.example', { example: clip(oneLine(v.example), 100) })}` : ''}`;
+  // what starts a flow: its kind, the words, where it starts, and for a clock its words and time zone
+  const triggerText = (tr) => [t(`outcomes.kind.${tr.kind}`), clip(oneLine(tr.text), 200), tr.node ? refText(tr.node) : '', tr.when ? [oneLine(tr.when), tr.tz ? t('clock.tz', { tz: oneLine(tr.tz) }) : ''].filter(Boolean).join(', ') : ''].filter(Boolean).join(' · ');
   const flowLines = (fl) => {
     const L = [`### ${oneLine(fl.title) || oneLine(fl.id)} (${code(fl.id)})`];
     const description = clip(oneLine(fl.description), 300);
     if (description) L.push(`> ${quote(description)}`);
+    if (fl.trigger) L.push(`- ${t('clock.trigger')}: ${triggerText(fl.trigger)}`);
     const steps = fl.steps || [];
     steps.slice(0, CAP.steps).forEach((s, i) => {
       const note = clip(oneLine(s.note), 200);
-      L.push(`${i + 1}. ${refText(s.ref)}${note ? `: ${note}` : ''}`);
+      L.push(`${i + 1}. ${refText(s.ref)}${note ? `: ${note}` : ''}${s.you_see ? ` — ${seenText(s.you_see)}` : ''}`);
     });
     if (steps.length > CAP.steps) L.push(`- ${more(steps.length - CAP.steps)}`);
+    if (fl.outcome) L.push(`- ${seenText(fl.outcome)}`);
     return L;
   };
+  // what you see, by place: the sentences that arrive there, each with the flow that brings it
+  const flowTitle = (id) => oneLine((graph.flows || []).find((f) => f.id === id)?.title) || oneLine(id);
+  const placeHead = (ref) => (ref.startsWith('f:') && fileAt.has(ref.slice(2)) && chosen(fileAt.get(ref.slice(2))) ? `${oneLine(fileAt.get(ref.slice(2)).name)} (${code(ref.slice(2))})` : refText(ref));
+  const placeLines = ([ref, list]) => [
+    `### ${placeHead(ref)}`,
+    ...list.slice(0, CAP.seen).map((o) => `- ${clip(oneLine(o.text), 200)} (${flowTitle(o.flow)})${o.example ? ` · ${t('outcomes.example', { example: clip(oneLine(o.example), 100) })}` : ''}`),
+    ...(list.length > CAP.seen ? [`- ${more(list.length - CAP.seen)}`] : []),
+  ];
   // Health: a title and a count. Where the findings are, their notes and the fixes stay in graph.json and the map.
   const SEVERITIES = [['high', t('health.sev.high.word')], ['medium', t('health.sev.medium.word')], ['low', t('health.sev.low.word')]];
   const issues = [...(graph.health?.issues || [])].sort((a, b) => SEVERITIES.findIndex(([s]) => s === a.severity) - SEVERITIES.findIndex(([s]) => s === b.severity));
@@ -255,6 +270,8 @@ export function buildMapMd(graph, { words, dir = 'floorplan', inputs = [], maxLi
   const rulesBody = [...joinEntries(rulesInOrder.slice(0, CAP.rules).map(ruleLines)), ...(rules.length > CAP.rules ? ['', `- ${more(rules.length - CAP.rules)}`] : [])];
   const flows = graph.flows || [];
   const flowsBody = [...joinEntries(flows.slice(0, CAP.flows).map(flowLines)), ...(flows.length > CAP.flows ? ['', `- ${more(flows.length - CAP.flows)}`] : [])];
+  const places = Object.entries(graph.outcomes || {}).filter(([, list]) => Array.isArray(list) && list.length);
+  const outcomesBody = [...joinEntries(places.slice(0, CAP.outcomes).map(placeLines)), ...(places.length > CAP.outcomes ? ['', `- ${more(places.length - CAP.outcomes)}`] : [])];
   const healthBody = [...issues.slice(0, CAP.health).map(findingLine), ...(issues.length > CAP.health ? [`- ${more(issues.length - CAP.health)}`] : [])];
   const tasks = recent?.tasks || [];
   const when = String(recent?.updatedAt || '').slice(0, 10);
@@ -271,6 +288,7 @@ export function buildMapMd(graph, { words, dir = 'floorplan', inputs = [], maxLi
     ...section('rules', t('rules.title'), rulesBody), '',
     ...section('schedules', t('clock.schedules'), schedulesBody), '',
     ...section('flows', t('header.flows'), flowsBody), '',
+    ...section('outcomes', t('outcomes.title'), outcomesBody), '',
     ...section('health', t('health.title'), healthBody), '',
     ...section('recent', t('recent.title'), recentBody),
   ];
