@@ -67,7 +67,9 @@ const VIEWER = path.join(SKILL, 'assets', 'viewer.html');
 const UI = fs.readdirSync(path.join(SKILL, 'assets', 'ui')).filter((n) => n.endsWith('.js')).sort().map((n) => path.join(SKILL, 'assets', 'ui', n));
 // MAP.md, the map as text, takes its headings and labels from the same table, in the build
 const MAP_MD = path.join(SKILL, 'scripts', 'lib', 'mapmd.mjs');
-const sources = () => [VIEWER, ...UI, MAP_MD].map((f) => ({ file: path.relative(SKILL, f).replace(/\\/g, '/'), text: fs.readFileSync(f, 'utf8') }));
+// so does the build when it puts a schedule's cron into words ("daily at 02:30"), which the page and MAP.md then show
+const CRON_TEXT = path.join(SKILL, 'scripts', 'lib', 'cron-text.mjs');
+const sources = () => [VIEWER, ...UI, MAP_MD, CRON_TEXT].map((f) => ({ file: path.relative(SKILL, f).replace(/\\/g, '/'), text: fs.readFileSync(f, 'utf8') }));
 // keys built at run time from a prefix (kind.service, conn.plain.http, systems.apps.label, glossary.api.term, …)
 const DYNAMIC = ['kind.', 'conn.plain.', 'conn.tech.', 'systems.', 'glossary.', 'lang.'];
 

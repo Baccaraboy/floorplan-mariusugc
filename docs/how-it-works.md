@@ -22,7 +22,8 @@ flowchart TD
 - **exported definitions** and their doc comments;
 - **endpoints** the server defines;
 - **web requests** the code makes;
-- content **fingerprints**, so later updates can tell what changed.
+- content **fingerprints**, so later updates can tell what changed;
+- **schedules**: what a clock starts, from the files that hold them: crons in GitHub Actions workflows and `vercel.json`, n8n workflows with a Schedule Trigger, crontab files and ofelia labels in compose files.
 
 Supported languages: TypeScript and JavaScript (including Vue, Svelte and Astro files), Python, Go, Rust, Java, Kotlin, Scala and Groovy, with lighter support for others.
 
@@ -64,10 +65,11 @@ By default everything is written for the app's owner, not an engineer: what each
 - with a `targets.json`, adds who writes to and reads from each database, service or file, and checks a one-writer rule;
 - with a `layers.json`, sorts every file into the system, the setup and the content, and checks what would keep the system from being published;
 - with a `rules.json`, hangs the rules and dated decisions the project documents (each with its source, never made up) on the parts, files, endpoints and targets they apply to, so a card shows the rules that hold there and a rule shows where it holds; a retired rule that still names places is a minor Health finding;
+- merges the schedules the scan found with a `schedules.json` (what each one runs, better titles, the ones the scan can't see, the ones to switch off), puts every cron into words in the map's language, works out the start minutes of one day for the Clock's strip, and draws an event line from a schedule's trigger to what it runs when both are on the map;
 - runs the **Health** check;
 - detects **screens**: Next.js, React Router, Vue, SvelteKit, Remix, Nuxt, Astro, Expo, Angular, TanStack;
 - writes `graph.json` and the self-contained `index.html`, noting whether Claude Code or Codex made it, so the map's Ask bar and fix prompts name the right one;
-- writes `MAP.md`, the same map as plain text for AI workers that start in the repo (the parts, who writes where, the rules and decisions, the flows, Health and the recent work), and, if the project sets `"git": "inputs"`, keeps the folder's `.gitignore` to ignore only what a build writes again, so the inputs and `MAP.md` can be committed ([how](project-files.md#keeping-the-inputs-in-git)).
+- writes `MAP.md`, the same map as plain text for AI workers that start in the repo (the parts, who writes where, the rules and decisions, the schedules, the flows, Health and the recent work), and, if the project sets `"git": "inputs"`, keeps the folder's `.gitignore` to ignore only what a build writes again, so the inputs and `MAP.md` can be committed ([how](project-files.md#keeping-the-inputs-in-git)).
 
 The map lays itself out in your browser with [ELK](https://eclipse.dev/elk/), so the build itself is fast.
 

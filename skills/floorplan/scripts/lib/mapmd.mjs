@@ -1,14 +1,14 @@
 // MAP.md: the map as plain text, for the AI workers (Claude Code, Codex …) that start in the repo and need the
 // structure before they build. build.mjs writes it next to graph.json, in the map's language: the head (project,
-// state, size), every part with its key files and endpoints, who writes where, the rules and decisions, the flows, the
-// Health findings (a title and a count, never a place or a value) and the recent work. The six sections and their order
-// never change, and a marker (<!-- floorplan:parts --> …) sits right above each heading, so a program finds a section
-// without knowing the language. The file stays under 1,500 lines however big the map is: the lists shrink step by step
-// and end in "… and N more". Whatever comes from the code or from a person is flattened to one line first, so it can't
-// add a heading, a list item or a marker of its own. The words come from the language table (map.* and a few keys the
-// viewer shares), never from this file. The file is meant to be committed (with "git": "inputs"), so it holds nothing
-// that changes with every edit: no lines of code, and a stamp (the day and commit it was written) that build.mjs
-// leaves as it was when nothing else changed.
+// state, size), every part with its key files and endpoints, who writes where, the rules and decisions, the schedules,
+// the flows, the Health findings (a title and a count, never a place or a value) and the recent work. The seven
+// sections and their order never change, and a marker (<!-- floorplan:parts --> …) sits right above each heading, so a
+// program finds a section without knowing the language. The file stays under 1,500 lines however big the map is: the
+// lists shrink step by step and end in "… and N more". Whatever comes from the code or from a person is flattened to
+// one line first, so it can't add a heading, a list item or a marker of its own. The words come from the language table
+// (map.* and a few keys the viewer shares), never from this file. The file is meant to be committed (with "git":
+// "inputs"), so it holds nothing that changes with every edit: no lines of code, and a stamp (the day and commit it was
+// written) that build.mjs leaves as it was when nothing else changed.
 import { fill } from './lang.mjs';
 
 export const MAX_LINES = 1500;
@@ -25,7 +25,7 @@ const STEPS = [
   { files: 0, routes: 0 },
 ];
 // The other sections have caps of their own, so together they take a third of the file at most.
-const CAP = { targets: 25, listed: 12, undeclared: 6, rules: 40, places: 8, flows: 10, steps: 12, health: 40, tasks: 10, items: 8, paths: 12 };
+const CAP = { targets: 25, listed: 12, undeclared: 6, rules: 40, places: 8, schedules: 40, flows: 10, steps: 12, health: 40, tasks: 10, items: 8, paths: 12 };
 
 const SEPARATORS = String.fromCharCode(0x2028, 0x2029);
 const CONTROL = new RegExp(`[\\x00-\\x1f\\x7f-\\x9f${SEPARATORS}]+`, 'g');
@@ -70,7 +70,7 @@ export function buildMapMd(graph, { words, dir = 'floorplan', inputs = [], maxLi
   const tn = (key, n, vars) => { const k = `${key}.${plural.select(n)}`; return t(k in words ? k : `${key}.other`, { n, ...vars }); };
   const more = (n) => t('map.more', { n });
   const bp = !!graph.meta?.blueprint;
-  const nodes = graph.nodes || [], files = graph.files || [], routes = graph.routes || [], links = graph.links || [], targets = graph.targets || [], rules = graph.rules || [];
+  const nodes = graph.nodes || [], files = graph.files || [], routes = graph.routes || [], links = graph.links || [], targets = graph.targets || [], rules = graph.rules || [], schedules = graph.schedules || [];
   const byId = new Map(nodes.map((n) => [n.id, n]));
   const fileAt = new Map(files.map((f) => [f.p, f]));
 
@@ -177,6 +177,20 @@ export function buildMapMd(graph, { words, dir = 'floorplan', inputs = [], maxLi
     if (r.source) L.push(`- ${t('rules.source')}: ${clip(oneLine(r.source), 200)}`);
     return L;
   };
+  // a schedule on one line: title, cron and words (with its time zone), what starts it, what runs, what it calls
+  const scheduleLine = (s) => {
+    const parts = [`${oneLine(s.title)} (${code(s.id)})`];
+    if (s.cron) parts.push(code(s.cron));
+    const when = s.human && s.human !== s.cron ? oneLine(s.human) : '';
+    if (when || s.tz) parts.push([when, s.tz ? t('clock.tz', { tz: oneLine(s.tz) }) : ''].filter(Boolean).join(', '));
+    if (s.trigger) parts.push(`${t('clock.trigger')}: ${refText(s.trigger)}`);
+    if (s.runs?.length) parts.push(`${t('clock.runs')}: ${inline(s.runs, CAP.places, placeRef)}`);
+    if (s.calls) parts.push(`${t('clock.calls')}: ${code(s.calls)}`);
+    if (s.note) parts.push(`${t('map.note')}: ${clip(oneLine(s.note), 200)}`);
+    if (s.source && s.source !== s.trigger && `f:${s.source}` !== s.trigger) parts.push(`${t('clock.source')}: ${clip(oneLine(s.source), 120)}`);
+    if (!s.enabled) parts.push(t('clock.off'));
+    return `- ${parts.join(' · ')}`;
+  };
   const flowLines = (fl) => {
     const L = [`### ${oneLine(fl.title) || oneLine(fl.id)} (${code(fl.id)})`];
     const description = clip(oneLine(fl.description), 300);
@@ -249,9 +263,13 @@ export function buildMapMd(graph, { words, dir = 'floorplan', inputs = [], maxLi
     ...joinEntries(tasks.slice(0, CAP.tasks).map(taskLines)),
     ...(tasks.length > CAP.tasks ? ['', `- ${more(tasks.length - CAP.tasks)}`] : []),
   ] : [];
+  // the plans in force first, the switched-off ones after them
+  const schedulesInOrder = [...schedules.filter((x) => x.enabled !== false), ...schedules.filter((x) => x.enabled === false)];
+  const schedulesBody = [...schedulesInOrder.slice(0, CAP.schedules).map(scheduleLine), ...(schedules.length > CAP.schedules ? [`- ${more(schedules.length - CAP.schedules)}`] : [])];
   const rest = [
     ...section('targets', t('targets.title'), targetsBody), '',
     ...section('rules', t('rules.title'), rulesBody), '',
+    ...section('schedules', t('clock.schedules'), schedulesBody), '',
     ...section('flows', t('header.flows'), flowsBody), '',
     ...section('health', t('health.title'), healthBody), '',
     ...section('recent', t('recent.title'), recentBody),

@@ -12,6 +12,7 @@ import { discover, gitFiles, gitInfo, classify, toPosix, parseArgs, fmtNum, HARD
 import { extract, callableCallsVia } from './lib/extract.mjs';
 import { findIssues } from './lib/health.mjs';
 import { findScreens } from './lib/screens.mjs';
+import { scanSchedules } from './lib/schedules.mjs';
 import { createResolver } from './lib/resolve.mjs';
 import { resolveRoutes, matchCalls } from './lib/routes.mjs';
 
@@ -160,6 +161,16 @@ const hosts = [];
 // the method, when the call shows it, tells a write (POST, PUT, PATCH, DELETE) from a read (GET) for targets.json
 for (const f of files) for (const h of f.hosts || []) hosts.push({ from: f.path, host: h.host, line: h.line, ...(h.method ? { method: h.method } : {}) });
 
+// ---------- 4b. schedules: what a clock starts (lib/schedules.mjs) ----------
+// Read from the files that hold them (workflows, vercel.json, n8n exports, crontabs, compose labels), whatever their
+// category, within the same size limit; the build merges them with floorplan/schedules.json.
+const byPath = new Map(files.map((f) => [f.path, f]));
+const schedules = scanSchedules(files, (p) => {
+  const f = byPath.get(p);
+  if (!f || f.bytes > maxBytes || ['lock', 'generated', 'asset'].includes(f.category)) return null;
+  return fs.readFileSync(path.join(root, p), 'utf8');
+});
+
 // ---------- 5. write scan.json ----------
 const scan = {
   version: 1,
@@ -185,6 +196,8 @@ const scan = {
   routes,
   http,
   hosts,
+  // what a clock starts: GitHub Actions, Vercel crons, n8n triggers, crontab lines, ofelia labels
+  schedules,
 };
 fs.mkdirSync(path.dirname(outFile), { recursive: true });
 fs.writeFileSync(outFile, JSON.stringify(scan));
@@ -292,6 +305,15 @@ if (fbRoutes.length || triggers.length) {
     for (const t of triggers.slice(0, 20)) line(`    ${t.name}  ${t.on}${t.what ? ` "${t.what}"` : ''}  ${t.file}:${t.line}`);
     if (triggers.length > 20) line(`    … ${triggers.length - 20} more`);
   }
+  line();
+}
+
+// schedules: the ids an owner can override in floorplan/schedules.json, each with what starts it
+if (schedules.length) {
+  const when = (s) => s.cron || (s.interval ? `every ${s.interval.every} ${s.interval.unit}` : '?');
+  line(`SCHEDULES  ${schedules.length} found (override by id in floorplan/schedules.json; the build puts them in words):`);
+  for (const s of schedules.slice(0, 20)) line(`  ${s.id.padEnd(28)} ${when(s).padEnd(16)} ${s.kind.padEnd(14)} ${s.source}${s.calls ? `  → ${s.calls}` : ''}${s.enabled === false ? '  (off)' : ''}`);
+  if (schedules.length > 20) line(`  … ${schedules.length - 20} more`);
   line();
 }
 

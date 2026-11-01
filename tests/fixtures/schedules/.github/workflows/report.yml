@@ -1,0 +1,10 @@
+name: Nightly report
+on:
+  schedule:
+    - cron: '30 2 * * *'   # 02:30 UTC
+  workflow_dispatch:
+jobs:
+  report:
+    runs-on: ubuntu-24.04
+    steps:
+      - run: node scripts/report.js

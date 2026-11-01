@@ -16,7 +16,7 @@ skills/floorplan/
   SKILL.md             the workflow Claude and Codex follow
   agents/openai.yaml   how Codex lists the skill
   references/          formats and style guides Claude reads while working
-    schema.md                architecture.json, recent-work.json, names.json, targets.json, rules.json, layers.json and ops.json
+    schema.md                architecture.json, recent-work.json, names.json, targets.json, rules.json, schedules.json, layers.json and ops.json
     choosing-boundaries.md   how to carve a codebase into a good map
     writing-descriptions.md  plain-language names and descriptions
     blueprint.md             plan.json, for a map planned from a PRD
@@ -29,10 +29,10 @@ skills/floorplan/
     refresh.mjs    incremental update: re-scan, carry over, flag changes, rebuild
     recent.mjs     facts for marking recent work
     open.mjs       start or reuse the map's server, and open the browser
-    lib/           extraction, import resolution, route matching, Health, layers and what keeps code from being published, screens, MAP.md (the map as text), which agent is running, helpers
+    lib/           extraction, import resolution, route matching, Health, layers and what keeps code from being published, screens, schedules (what a clock starts) and cron in words, MAP.md (the map as text), which agent is running, helpers
   assets/
     viewer.html    the map (template the build fills in)
-    ui/            viewer extensions: Theme button, blueprints, glossary, Health, recent work, operations, screens, targets, layers, rules, tour, waitlist card
+    ui/            viewer extensions: Theme button, blueprints, glossary, Health, recent work, operations, the Clock, screens, targets, layers, rules, tour, waitlist card
     graph-query.js shared map lookups (viewer, query.mjs, Ask instructions)
     serve.mjs      copied into each project's floorplan/ folder; answers through Claude Code or Codex
     query-cli.mjs  becomes floorplan/query.mjs
@@ -91,6 +91,7 @@ A few tests open the built map in a real browser. They use [Playwright](https://
 | `targets.test.mjs` | who writes where, from `targets.json`: the Targets panel's data, write and read lines from part to target, a one-writer target with two writers marked red with an important Health finding, calls the scan saw but the file doesn't list (direction from the HTTP method), mistakes as errors, the panel itself run against a stand-in map, and nothing changes without the file |
 | `layers.test.mjs` | layers from `layers.json`: files by the first matching pattern in the list's order, parts by majority or mixed, each Publishability check with what it finds and what it leaves alone, the private words masked and never written, a missing word list as a note, mistakes as errors, the Layers switch and the Health group run against a stand-in map, the export, and nothing changes without the file |
 | `rules.test.mjs` | rules and decisions from `rules.json`: `graph.rules` with each ref resolved (a part, a file or glob, an endpoint, a target as `t:<id>`), mistakes as errors with a suggestion, a moved file named after a refresh, the retired-rule Health finding, the Rules section of `MAP.md` in English and German, the Rules panel and "Rules here" run against a stand-in map in both languages, the panel in a real browser (Playwright, when installed), and nothing changes without the file |
+| `schedules.test.mjs` | the Clock: every form the scan finds (GitHub Actions, Vercel crons, n8n triggers and intervals, crontab lines with their zone and a cron.d user, ofelia labels in both forms), `schedules.json` overriding a find field by field and switching one off, mistakes as errors with a suggestion and a bad cron or zone as a warning, a moved file named after a refresh, cron in words in English and German and the start minutes of a day, the event edge only when both ends are on the map, the Schedules section of `MAP.md`, the Clock panel, strip, marks and "Schedules here" run against a stand-in map in both languages, the panel in a real browser (Playwright, when installed), and nothing changes without a find and without the file |
 | `ops.test.mjs` | operations from `ops.json`, written by the owner's tooling: `graph.ops` with its items and counts, a ref that isn't on the map left out with a warning, a bad field as a warning, a missing `asOf` and a stale file, a target id resolved to the target's box, nothing in `MAP.md`, the folder's `.gitignore` in inputs mode, the export, `serve.mjs` handing the file out, the Ops switch, hover lines and panel run against a stand-in map in English and German, and nothing changes without the file |
 | `large-files.test.mjs` | files over the scan's size limit stay on the map with their line count, and the scan, Health and the map say they weren't read |
 | `external-edges.test.mjs` | an edge between two external nodes: kept with a warning and `drawn: false`, no field and no warning without one, and (in a real browser through Playwright, when it's installed; skipped otherwise) the board lays out without an error, draws the other connections and lists the edge in both nodes' details |

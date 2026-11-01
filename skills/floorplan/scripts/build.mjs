@@ -18,6 +18,7 @@ import { buildScreens } from './lib/screens.mjs';
 import { writeClaudeMd } from './lib/claudemd.mjs';
 import { detectAgent } from './lib/agent.mjs';
 import { languages, strings as langStrings, fill } from './lib/lang.mjs';
+import { parseCron, cronTimes, cronWords, isInterval, intervalWords, intervalTimes } from './lib/cron-text.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const SKILL_DIR = path.resolve(HERE, '..');
@@ -604,6 +605,123 @@ if (ruleList?.length) {
   });
 }
 
+// ---------- schedules (the scan + floorplan/schedules.json): what a clock starts ----------
+// The scan finds schedules in the files that hold them (GitHub Actions, Vercel crons, n8n triggers, crontabs, ofelia
+// labels; lib/schedules.mjs). floorplan/schedules.json adds what the scan can't see and, by id, overrides a find field by
+// field (a better title, the parts it runs, "enabled": false). Refs in `runs` are checked like rules.json; a `calls`
+// that names an endpoint on the map counts as a run too. Each plan gets its cron in words in the map's language
+// (lib/cron-text.mjs), the start minutes of one day for the Clock's strip, and an `event` edge from its trigger to what
+// it runs when both are on the map. The map shows them under a Clock button (ui/28-clock.js); MAP.md gets a section.
+const SCHEDULE_FIELDS = ['id', 'title', 'cron', 'human', 'tz', 'trigger', 'runs', 'calls', 'note', 'source', 'enabled'];
+const schedulesFile = path.join(outDir, 'schedules.json');
+let scheduleList = null;
+if (fs.existsSync(schedulesFile)) {
+  let raw = null;
+  try { raw = JSON.parse(fs.readFileSync(schedulesFile, 'utf8')); } catch (e) { err(`schedules.json is not valid JSON: ${e.message}`); }
+  if (raw !== null) {
+    scheduleList = Array.isArray(raw) ? raw : Array.isArray(raw?.schedules) ? raw.schedules : null;
+    if (!scheduleList) err('schedules.json must be a list of schedules, or { "schedules": [ … ] }');
+  }
+}
+const outSchedules = [];
+{
+  const routeIdx = new Map(routesIn.map((r, i) => [routeKey(r), i]));
+  const targetIds = outTargets.map((x) => x.id);
+  const targetBox = new Map(outTargets.map((x) => [x.id, x.node]));
+  const allPaths = new Set(filesAll.map((f) => f.path));
+  const tw = (k, vars) => fill(words[k] ?? k, vars);
+  // what a plan runs: a part id, "METHOD /path", a file path or glob, or a target id (the rule's own form, "t:<id>")
+  const resolveRun = (s, w) => {
+    if (!isStr(s)) { err(`${w} must be a part id, a file path or glob, "METHOD /path" or a target id`); return []; }
+    if (byId.has(s)) return ['n:' + s];
+    const m = /^([A-Za-z]+)\s+(\/\S*)$/.exec(s.trim());
+    if (m && routeIdx.has(`${m[1].toUpperCase()} ${m[2]}`)) return [`r:${routeIdx.get(`${m[1].toUpperCase()} ${m[2]}`)}`];
+    const g = compileGlob(s);
+    const hits = included.filter((f) => g.test(f.path)).map((f) => f.path);
+    if (hits.length) return cover(hits);
+    if (targetIds.includes(s)) return ['t:' + s];
+    if (fileByPath.has(s)) { err(`${w} "${s}" is a file that is not on the map (category ${fileByPath.get(s).category})`); return []; }
+    err(`${w} "${s}" is neither a part id, a path or glob that matches a file on the map, "METHOD /path" nor a target id${includedSet.has(movedTo.get(s)) ? ` — did you mean "${movedTo.get(s)}"? (it moved there)` : didYouMean(s, [...ids, ...targetIds, ...routeIdx.keys(), ...includedSet])}`);
+    return [];
+  };
+  // what starts a plan: a part, a file on the map or an endpoint, as its card; a file the scan saw but the map doesn't
+  // show (a workflow or crontab is config) stays as its path, so the plan still says where it comes from
+  const resolveTrigger = (s, w) => {
+    if (!isStr(s)) { err(`${w} must be a part id, a file path or "METHOD /path"`); return null; }
+    const v = s.trim().replace(/^\.\//, '');
+    if (byId.has(v)) return 'n:' + v;
+    if (includedSet.has(v)) return 'f:' + v;
+    const m = /^([A-Za-z]+)\s+(\/\S*)$/.exec(v);
+    if (m && routeIdx.has(`${m[1].toUpperCase()} ${m[2]}`)) return `r:${routeIdx.get(`${m[1].toUpperCase()} ${m[2]}`)}`;
+    if (allPaths.has(v)) return v;
+    err(`${w} "${s}" is neither a part id, a scanned file nor "METHOD /path"${includedSet.has(movedTo.get(v)) ? ` — did you mean "${movedTo.get(v)}"? (it moved there)` : didYouMean(v, [...ids, ...allPaths, ...routeIdx.keys()])}`);
+    return null;
+  };
+  const merged = new Map();
+  for (const s of Array.isArray(scan.schedules) ? scan.schedules : []) merged.set(s.id, { ...s, kind: s.kind || null, found: true, trigger: s.trigger ? (includedSet.has(s.trigger) ? 'f:' + s.trigger : s.trigger) : null, runs: [] });
+  const seenIds = new Set();
+  (scheduleList || []).forEach((e, i) => {
+    const where = `schedules.json schedules[${i}]${isStr(e?.id) ? ` ("${e.id}")` : ''}`;
+    if (!e || typeof e !== 'object' || Array.isArray(e)) return err(`${where} must be an object`);
+    for (const k of Object.keys(e)) if (!SCHEDULE_FIELDS.includes(k) && k !== '$schema') err(`${where}: unknown field "${k}"${didYouMean(k, SCHEDULE_FIELDS)}`);
+    if (!isStr(e.id)) return err(`${where}.id is required`);
+    if (!/^[A-Za-z0-9_.\-]+$/.test(e.id)) err(`${where}.id may only use letters, digits, "_", "-" and "."`);
+    if (seenIds.has(e.id)) err(`${where}.id duplicates an earlier schedule`);
+    seenIds.add(e.id);
+    const base = merged.get(e.id);
+    const over = {};
+    // a new plan needs a title and a cron (or words); an override of a find needs only what it changes
+    const title = fixedText(e.title, `${where}.title`, !base);
+    if (title) over.title = title;
+    if (e.cron !== undefined) { if (!isStr(e.cron)) err(`${where}.cron must be a cron expression like "30 2 * * *"`); else { over.cron = e.cron.trim(); over.interval = undefined; } }
+    const human = fixedText(e.human, `${where}.human`, false);
+    if (human) over.human = human;
+    if (!base && !isStr(e.cron) && !human) err(`${where} needs "cron" (five fields, like "30 2 * * *") or "human" (the schedule in words)`);
+    if (e.tz !== undefined) {
+      if (!isStr(e.tz)) err(`${where}.tz must be a time zone name like "Europe/Berlin"`);
+      else { over.tz = e.tz.trim(); try { new Intl.DateTimeFormat('en', { timeZone: e.tz.trim() }); } catch { warn(`${where}.tz "${e.tz}" is not a time zone this Node knows; shown as written`); } }
+    }
+    if (e.trigger !== undefined) { const ref = resolveTrigger(e.trigger, `${where}.trigger`); if (ref) over.trigger = ref; }
+    if (e.runs !== undefined) {
+      if (!Array.isArray(e.runs)) err(`${where}.runs must be a list of part ids, file paths or globs, "METHOD /path" or target ids`);
+      else { over.runs = []; e.runs.forEach((s, j) => { for (const item of resolveRun(s, `${where}.runs[${j}]`)) if (!over.runs.includes(item)) over.runs.push(item); }); }
+    }
+    if (e.calls !== undefined) { if (!isStr(e.calls)) err(`${where}.calls must be text, like "POST /reports/run" or a command`); else over.calls = e.calls.trim(); }
+    const note = fixedText(e.note, `${where}.note`, false);
+    if (note) over.note = note;
+    if (e.source !== undefined) { if (!isStr(e.source)) err(`${where}.source must be text: where the schedule is written down`); else over.source = e.source.trim(); }
+    if (e.enabled !== undefined) { if (typeof e.enabled !== 'boolean') err(`${where}.enabled must be true or false`); else over.enabled = e.enabled; }
+    merged.set(e.id, { ...(base || { id: e.id, kind: null, found: false, runs: [] }), ...over, declared: true });
+  });
+  for (const s of merged.values()) {
+    const where = s.found && !s.declared ? `${s.source} ("${s.id}")` : `schedules.json ("${s.id}")`;
+    const parsed = s.cron ? parseCron(s.cron) : null;
+    if (s.cron && !parsed) warn(`${where}: cron "${s.cron}" is not a five-field cron expression (minute hour day month weekday); shown as written`);
+    const interval = isInterval(s.interval) ? s.interval : null;
+    const enabled = s.enabled !== false;
+    const human = s.human || (parsed ? cronWords(parsed, tw, lang) : null) || (interval ? intervalWords(interval, tw) : null) || s.cron || '';
+    const times = !enabled ? [] : parsed ? cronTimes(parsed) : intervalTimes(interval);
+    // an endpoint the plan calls is on the map: that's what it runs
+    const runs = [...s.runs];
+    for (const call of String(s.calls || '').split(' · ')) {
+      const m = /^([A-Za-z]+)\s+(\/\S*)$/.exec(call.trim());
+      const r = m && routeIdx.has(`${m[1].toUpperCase()} ${m[2]}`) ? `r:${routeIdx.get(`${m[1].toUpperCase()} ${m[2]}`)}` : null;
+      if (r && !runs.includes(r)) runs.push(r);
+    }
+    outSchedules.push({
+      id: s.id, title: s.title || s.id, cron: s.cron || null, tz: s.tz || null, human, trigger: s.trigger || null, runs,
+      calls: s.calls || null, note: s.note || null, source: s.source || null, kind: s.kind || null, found: !!s.found, enabled, times,
+    });
+    // the clock on the board: an event from the trigger to each thing it runs, when both have a card
+    const from = s.trigger && /^[nfr]:/.test(s.trigger) ? s.trigger : null;
+    if (!enabled || !from) continue;
+    for (const item of runs) {
+      const to = item.startsWith('t:') ? targetBox.get(item.slice(2)) : item;
+      if (to) addLink(from, to, 'event', { label: s.cron ? `cron ${s.cron}` : human, w: 1 });
+    }
+  }
+}
+
 // ---------- layers (floorplan/layers.json): system, setup and content ----------
 // Which files are the system the owner could one day publish, which are the setup of this one installation (key
 // names, ids, paths, calendars) and which are the owner's content (customers, amounts, mails). Each file takes the
@@ -746,7 +864,7 @@ if (fs.existsSync(opsFile)) {
 const pct = included.length ? (unassigned.length / included.length) * 100 : 0;
 const report = [];
 if (errors.length) {
-  report.push(`✗ ${errors.length} error(s) in ${path.relative(root, archFile)}${scan.blueprint ? ' or plan.json' : ''}${['names.json', 'targets.json', 'rules.json', 'layers.json'].filter((f) => errors.some((e) => e.startsWith(f))).map((f) => ` or ${f}`).join('')}:`);
+  report.push(`✗ ${errors.length} error(s) in ${path.relative(root, archFile)}${scan.blueprint ? ' or plan.json' : ''}${['names.json', 'targets.json', 'rules.json', 'schedules.json', 'layers.json'].filter((f) => errors.some((e) => e.startsWith(f))).map((f) => ` or ${f}`).join('')}:`);
   for (const e of errors) report.push(`  - ${e}`);
 }
 if (warnings.length) {
@@ -830,6 +948,8 @@ const graph = {
   ...(outTargets.length ? { targets: outTargets } : {}),
   // the project's rules and decisions, each resolved to the cards it applies to (a target as "t:<id>")
   ...(outRules.length ? { rules: outRules } : {}),
+  // what a clock starts: the scan's finds and schedules.json, merged, each with its words and the start minutes of a day
+  ...(outSchedules.length ? { schedules: outSchedules } : {}),
   // the layers as the map shows them (never the private words, which only Health gets)
   ...(layers ? { layers: {
     list: layers.list.map(({ where, ...l }) => ({ ...l, files: included.filter((f) => layers.layerOf(f.path) === l.id).length })),
@@ -891,7 +1011,7 @@ if (scan.blueprint) { fs.mkdirSync(path.join(outDir, '.cache'), { recursive: tru
 // MAP.md: the map as plain text for AI workers (lib/mapmd.mjs), in the map's language. It is written only when its text
 // changes, not when only its "as of" line would, so a rebuild that changes nothing leaves the file (and a git diff of
 // it) alone, also a day or a commit later.
-const MAP_INPUTS = ['architecture.json', 'plan.json', 'names.json', 'targets.json', 'rules.json', 'layers.json', 'custom-flows.json'];
+const MAP_INPUTS = ['architecture.json', 'plan.json', 'names.json', 'targets.json', 'rules.json', 'schedules.json', 'layers.json', 'custom-flows.json'];
 const mapFile = path.join(outDir, 'MAP.md');
 let mapNote;
 try {
@@ -918,6 +1038,22 @@ if (graph.rules) {
   const n = graph.rules.filter((r) => r.kind === 'rule').length, m = graph.rules.length - n, k = graph.rules.filter((r) => r.status === 'retired').length;
   report.push(`RULES  ${n} rule${n === 1 ? '' : 's'}, ${m} decision${m === 1 ? '' : 's'}${k ? ` · ${k} retired` : ''}`);
 } else report.push(`RULES  none${fs.existsSync(rulesFile) ? ' (nothing in rules.json)' : ' (no rules.json)'}`);
+if (graph.schedules) {
+  const list = graph.schedules, found = list.filter((s) => s.found).length, off = list.filter((s) => !s.enabled).length;
+  // the next start of the day, each plan's clock read in its own time zone
+  const minuteNow = (tz) => { try { const p = new Intl.DateTimeFormat('en-GB', { timeZone: tz || undefined, hour: '2-digit', minute: '2-digit', hour12: false }).formatToParts(new Date()); return (+p.find((x) => x.type === 'hour').value % 24) * 60 + +p.find((x) => x.type === 'minute').value; } catch { return null; } };
+  let next = null;
+  for (const s of list) {
+    if (!s.times.length) continue;
+    const now = minuteNow(s.tz);
+    if (now === null) continue;
+    const at = s.times.find((x) => x >= now) ?? s.times[0];
+    const wait = at >= now ? at - now : 24 * 60 - now + at;
+    if (!next || wait < next.wait) next = { wait, at, s };
+  }
+  const hhmm = (m) => `${String(Math.floor(m / 60)).padStart(2, '0')}:${String(m % 60).padStart(2, '0')}`;
+  report.push(`SCHEDULES  ${list.length} (${found} found, ${list.length - found} declared)${off ? ` · ${off} off` : ''}${next ? ` · next: ${hhmm(next.at)}${next.s.tz ? ` ${next.s.tz}` : ''} ${next.s.title}` : ''}`);
+} else report.push(`SCHEDULES  none${fs.existsSync(schedulesFile) ? ' (nothing in schedules.json, nothing found in the code)' : ' (nothing found in the code, no schedules.json)'}`);
 if (graph.layers) {
   const nMixed = graph.layers.mixed;
   report.push(`LAYERS  ${graph.layers.list.map((l) => `${l.id} ${l.files}`).join(' · ')} files on the map${nMixed ? ` (${nMixed} part${nMixed === 1 ? '' : 's'} mixed)` : ''}`);

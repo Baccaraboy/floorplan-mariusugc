@@ -1,0 +1,17 @@
+services:
+  db:
+    image: postgres:16
+    labels:
+      ofelia.enabled: "true"
+      ofelia.job-exec.backup.schedule: "@every 1h"
+      ofelia.job-exec.backup.command: "pg_dump -U app app > /backups/app.sql"
+  web:
+    image: nginx
+    labels:
+      - ofelia.job-exec.prune.schedule=0 30 4 * * *
+      - "ofelia.job-exec.prune.command=rm -rf /var/cache/nginx/*"
+      - ofelia.job-exec.ping.schedule=@every 90m
+      - ofelia.job-exec.ping.command=curl -s http://localhost/health
+  ofelia:
+    image: mcuadros/ofelia:latest
+    command: daemon --docker
