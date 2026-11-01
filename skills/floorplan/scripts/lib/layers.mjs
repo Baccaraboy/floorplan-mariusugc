@@ -8,7 +8,8 @@
 // and buildHealth (health.mjs) turns what findPublishable() finds into the Publishability findings.
 //
 // As everywhere in Health, precision beats recall, and a finding records where something is, never what it is: a
-// line and a kind ("a UUID-style id"), and for a private word only its first letter.
+// line and a kind (`uuid`, a key of the language table, which buildHealth puts into words as "a UUID-style id" in
+// the map's language), and for a private word only its first letter.
 
 import { compileGlob } from './common.mjs';
 
@@ -131,15 +132,17 @@ function values(text, f) {
   if (f.category === 'config' && CONFIG_LANGS.has(f.lang)) { const v = CONFIG_VALUE.exec(text); if (v) out.push(v[1]); }
   return out;
 }
+// Each finder answers with the kind of what it found, as { what, vars? }: `what` is a key of the language table
+// (health.publish.what.<what>) and `vars` fills its placeholders, so a finding never holds the value itself.
 function identifiers(text, f, known) {
   if (SECRET_LINE.test(text) || HASH_LINE.test(text)) return null;
-  for (const m of text.matchAll(UUID)) if (!GENERIC_UUID.test(m[0]) && new Set(m[0].replace(/-/g, '').toLowerCase()).size > 4) return 'a UUID-style id';
-  for (const m of text.matchAll(HEX32)) if (/\d/.test(m[0]) && /[a-f]/i.test(m[0]) && new Set(m[0].toLowerCase()).size > 4) return 'a 32-character id';
+  for (const m of text.matchAll(UUID)) if (!GENERIC_UUID.test(m[0]) && new Set(m[0].replace(/-/g, '').toLowerCase()).size > 4) return { what: 'uuid' };
+  for (const m of text.matchAll(HEX32)) if (/\d/.test(m[0]) && /[a-f]/i.test(m[0]) && new Set(m[0].toLowerCase()).size > 4) return { what: 'hex32' };
   if (text.length > 400) return null; // minified or data lines: too much noise for the looser check
   for (const v of values(text, f)) {
     // data: addresses and base64 blobs hold random-looking text that isn't an id
     if (/^data:|base64,/i.test(v) || (/^[A-Za-z0-9+/=_-]{40,}$/.test(v) && /[+/]|=$/.test(v))) continue;
-    for (const seg of v.split(/[/?&=#:@.\s,;|()[\]{}<>"'`+\\]+/)) if (tokenLike(seg) && !known?.(seg)) return `a ${seg.length}-character id`;
+    for (const seg of v.split(/[/?&=#:@.\s,;|()[\]{}<>"'`+\\]+/)) if (tokenLike(seg) && !known?.(seg)) return { what: 'token', vars: { len: seg.length } };
   }
   return null;
 }
@@ -165,36 +168,38 @@ function contact(text) {
     const tld = domain.split('.').pop();
     // a generated name before the @ (a shared calendar's id, a service's inbox) is an id, which the identifier check has
     if (EXAMPLE_DOMAIN.test(domain) || FILE_TLD.test(tld) || NOT_A_PERSON.test(local) || tokenLike(local)) continue;
-    return 'an email address';
+    return { what: 'email' };
   }
   for (const m of text.matchAll(PHONE_INTL)) {
     const d = m[0].replace(/\D/g, '');
     if (d.length < 8 || d.length > 15 || madeUp(d)) continue;
     if (d[0] === '1' && (d.slice(1, 4) === '555' || d.slice(4, 7) === '555')) continue; // North America's numbers for films and examples
-    return 'a phone number';
+    return { what: 'phone' };
   }
-  for (const m of text.matchAll(PHONE_US)) if (m[1] !== '555' && m[2] !== '555' && !madeUp(m[0].replace(/\D/g, ''))) return 'a phone number';
+  for (const m of text.matchAll(PHONE_US)) if (m[1] !== '555' && m[2] !== '555' && !madeUp(m[0].replace(/\D/g, ''))) return { what: 'phone' };
   if (PHONE_WORD.test(text) || /tel:/i.test(text)) for (const m of text.matchAll(PHONE_NATIONAL)) {
     const d = m[0].replace(/\D/g, '');
-    if (d.length >= 7 && d.length <= 15 && !madeUp(d)) return 'a phone number';
+    if (d.length >= 7 && d.length <= 15 && !madeUp(d)) return { what: 'phone' };
   }
   return null;
 }
 
 // absolute paths that only exist on one computer
 const NOT_A_HOME = /^(?:you|your|yourname|your[-_.]?name|user|username|user[-_.]name|name|me|someone|somebody|example|shared|guest|default|public|runner|node|app|vscode|codespace|gitpod|circleci|jenkins|travis|docker|nobody|x{3,}|[<$%{[*].*|\.{3}|\u2026)$/i;
+// a folder on one Mac (/Users/…), a home folder on one Linux machine (/home/…), a folder on one NAS (/volume1/…), a
+// folder on one Windows computer (C:\…): the words come from the table, the volume and the drive letter go along
 const MACHINE_PATHS = [
-  { re: /(?<![\w.~$/-])\/Users\/([^/\s'"`<>$%{}()[\]*]+)\/[^\s'"`<>]/g, what: 'a folder on one Mac (/Users/\u2026)', user: 1 },
-  { re: /(?<![\w.~$/-])\/home\/([a-z_][a-z0-9_.-]{0,31})\/[^\s'"`<>]/g, what: 'a home folder on one Linux machine (/home/\u2026)', user: 1 },
-  { re: /(?<![\w.~$/-])\/(volume(?:USB)?\d+)\/[^\s'"`<>]/g, what: (m) => `a folder on one NAS (/${m[1]}/\u2026)` },
-  { re: /(?<![A-Za-z0-9_])([A-Za-z]):\\{1,2}(?!\\)([^\\\s'"`<>|*?:]+)(?:\\{1,2}([^\\\s'"`<>|*?:]+))?/g, what: (m) => `a folder on one Windows computer (${m[1].toUpperCase()}:\\\u2026)`, win: true },
+  { re: /(?<![\w.~$/-])\/Users\/([^/\s'"`<>$%{}()[\]*]+)\/[^\s'"`<>]/g, what: () => ({ what: 'mac' }), user: 1 },
+  { re: /(?<![\w.~$/-])\/home\/([a-z_][a-z0-9_.-]{0,31})\/[^\s'"`<>]/g, what: () => ({ what: 'linux' }), user: 1 },
+  { re: /(?<![\w.~$/-])\/(volume(?:USB)?\d+)\/[^\s'"`<>]/g, what: (m) => ({ what: 'nas', vars: { volume: m[1] } }) },
+  { re: /(?<![A-Za-z0-9_])([A-Za-z]):\\{1,2}(?!\\)([^\\\s'"`<>|*?:]+)(?:\\{1,2}([^\\\s'"`<>|*?:]+))?/g, what: (m) => ({ what: 'windows', vars: { drive: m[1].toUpperCase() } }), win: true },
 ];
 function machinePath(text) {
   for (const p of MACHINE_PATHS) for (const m of text.matchAll(p.re)) {
     if (p.user && NOT_A_HOME.test(m[p.user])) continue;
     // C:\Windows and C:\Program Files are on every Windows computer; C:\Users\<you> is a placeholder
     if (p.win && (/^(?:windows|program|programdata)$/i.test(m[2]) || (/^users$/i.test(m[2]) && (!m[3] || NOT_A_HOME.test(m[3]))))) continue;
-    return typeof p.what === 'function' ? p.what(m) : p.what;
+    return p.what(m);
   }
   return null;
 }
@@ -207,7 +212,9 @@ function machinePath(text) {
  * Tests and fixtures are left out of all but the private words: their ids and addresses are usually made up, and a
  * real name in a test is exactly what should be found. `skipLines` holds the lines Health's secret check already
  * reports; `known` tells a key in a known format (Health's job too). Returns
- * [{ k: 'identifier' | 'private-word' | 'contact' | 'path', line, what?, mask? }], at most one per kind and line.
+ * [{ k: 'identifier' | 'private-word' | 'contact' | 'path', line, what?, vars?, mask? }], at most one per kind and
+ * line: `what` is the kind as a key of the language table (uuid, hex32, token, email, phone, mac, linux, nas,
+ * windows) with `vars` for its placeholders, `mask` a private word's first letter.
  */
 export function findPublishable(src, f, { layer, find, test = false, skipLines, known } = {}) {
   const out = [];
@@ -225,11 +232,11 @@ export function findPublishable(src, f, { layer, find, test = false, skipLines, 
   if (layer !== 'system' || test) return out;
   src.split('\n').forEach((text, i) => {
     const line = i + 1;
-    if (!skipLines?.has(line)) { const what = identifiers(text, f, known); if (what) out.push({ k: 'identifier', line, what }); }
+    if (!skipLines?.has(line)) { const id = identifiers(text, f, known); if (id) out.push({ k: 'identifier', line, ...id }); }
     const who = contact(text);
-    if (who) out.push({ k: 'contact', line, what: who });
+    if (who) out.push({ k: 'contact', line, ...who });
     const where = machinePath(text);
-    if (where) out.push({ k: 'path', line, what: where });
+    if (where) out.push({ k: 'path', line, ...where });
   });
   return out.sort((a, b) => a.line - b.line);
 }

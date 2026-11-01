@@ -6,15 +6,21 @@
 // findIssues(src, file)  — called by scan.mjs for every code/config/docs file with its source.
 //                           Returns raw findings for that file, stored in scan.json files[].issues.
 //                           Findings never contain a secret's value, only its line, kind and a masked hint.
-// buildHealth(ctx)       — called by build.mjs with { graph, scan, arch, root, layers } after the graph is built.
-//                           Returns { summary: { high, medium, low }, issues: [...] }, stored as graph.health.
-//                           With floorplan/layers.json, also the Publishability group: its issues (group
-//                           "publish") come after the others, and its counts are in publish, not in summary.
+//                           They hold no words either, only keys (the kind of key, the CORS form), so a scan
+//                           serves a map in any language.
+// buildHealth(ctx)       — called by build.mjs with { graph, scan, arch, root, layers, words, lang } after the
+//                           graph is built. Returns { summary: { high, medium, low }, issues: [...] }, stored as
+//                           graph.health. With floorplan/layers.json, also the Publishability group: its issues
+//                           (group "publish") come after the others, and its counts are in publish, not in summary.
+//                           Each issue has a fixed id (`<check>` or `<check>:<instance>`), and its title, detail and
+//                           notes come from the language table (the health.<check>.* keys), in the map's language;
+//                           its fix is a request for the agent and stays English.
 
 import fs from 'node:fs';
 import path from 'node:path';
 import { git, compileGlob } from './common.mjs';
 import { findPublishable, wordFinder } from './layers.mjs';
+import { strings as langStrings, translator } from './lang.mjs';
 
 const lineIndex = (src) => {
   const starts = [0];
@@ -42,35 +48,36 @@ const PLACEHOLDER = /your|xxxx|example|changeme|change[-_]?me|placeholder|replac
 
 // ---------- 1. secrets ----------
 
-// Well-known key formats. `sev` defaults to high; `live` formats are flagged even in test files.
+// Well-known key formats. `what` is the kind of key as a key of the language table (health.secret.kind.<what>), `svc`
+// the service it unlocks; `sev` defaults to high; `live` formats are flagged even in test files.
 const FORMATS = [
-  { re: /\bAKIA[0-9A-Z]{16}\b/g, what: 'an Amazon Web Services (AWS) access key', svc: 'AWS', live: true },
-  { re: /\b(?:sk|rk)_live_[0-9a-zA-Z]{20,}/g, what: 'a Stripe live secret key', svc: 'Stripe', live: true },
-  { re: /\b(?:sk|rk)_test_[0-9a-zA-Z]{20,}/g, what: 'a Stripe test key', svc: 'Stripe', sev: 'medium' },
-  { re: /\bwhsec_[A-Za-z0-9]{24,}/g, what: 'a Stripe webhook signing secret', svc: 'Stripe' },
-  { re: /\bgh[pousr]_[A-Za-z0-9]{36,}\b/g, what: 'a GitHub access token', svc: 'GitHub', live: true },
-  { re: /\bgithub_pat_[A-Za-z0-9_]{50,}/g, what: 'a GitHub access token', svc: 'GitHub', live: true },
-  { re: /\bglpat-[A-Za-z0-9_-]{20,}/g, what: 'a GitLab access token', svc: 'GitLab', live: true },
-  { re: /\bxox[abposr]-[A-Za-z0-9-]{10,}/g, what: 'a Slack token', svc: 'Slack', live: true },
-  { re: /https:\/\/hooks\.slack\.com\/services\/T[A-Z0-9]+\/B[A-Z0-9]+\/[A-Za-z0-9]{20,}/g, what: 'a Slack webhook address (anyone with it can post to your Slack)', svc: 'Slack', sev: 'medium' },
-  { re: /\bAIza[0-9A-Za-z_\-]{35}\b/g, what: 'a Google API key', svc: 'Google Cloud', sev: 'medium', skipIf: /firebase|authDomain|messagingSenderId/i },
-  { re: /\bGOCSPX-[A-Za-z0-9_\-]{20,}/g, what: 'a Google sign-in client secret', svc: 'Google Cloud' },
-  { re: /\bsk-ant-[a-z]+\d*-[A-Za-z0-9_\-]{40,}/g, what: 'an Anthropic (Claude) API key', svc: 'Anthropic', live: true },
-  { re: /\bsk-(?:proj-|svcacct-|admin-)?[A-Za-z0-9_\-]{16,}T3BlbkFJ[A-Za-z0-9_\-]{16,}/g, what: 'an OpenAI API key', svc: 'OpenAI', live: true },
-  { re: /\bsk-(?:proj|svcacct|admin)-[A-Za-z0-9_\-]{40,}/g, what: 'an OpenAI API key', svc: 'OpenAI', live: true },
-  { re: /-----BEGIN (?:RSA |EC |DSA |OPENSSH |PGP |ENCRYPTED )?PRIVATE KEY(?: BLOCK)?-----/g, what: 'a private key', svc: null, whole: true },
-  { re: /\bSG\.[A-Za-z0-9_\-]{22}\.[A-Za-z0-9_\-]{43}\b/g, what: 'a SendGrid email API key', svc: 'SendGrid', live: true },
-  { re: /\bsq0csp-[0-9A-Za-z_\-]{40,}/g, what: 'a Square app secret', svc: 'Square', live: true },
-  { re: /\bsq0atp-[0-9A-Za-z_\-]{20,}/g, what: 'a Square access token', svc: 'Square', live: true },
-  { re: /\bEAAA[A-Za-z0-9_\-]{60,}/g, what: 'a Square access token', svc: 'Square', live: true },
-  { re: /\bshp(?:at|ss|ca|pa)_[a-fA-F0-9]{32}\b/g, what: 'a Shopify access token', svc: 'Shopify', live: true },
-  { re: /\bhf_[A-Za-z0-9]{30,}\b/g, what: 'a Hugging Face token', svc: 'Hugging Face', live: true },
-  { re: /\bnpm_[A-Za-z0-9]{36}\b/g, what: 'an npm publishing token', svc: 'npm', live: true },
-  { re: /\bsbp_[a-f0-9]{40}\b/g, what: 'a Supabase account token', svc: 'Supabase', live: true },
-  { re: /\bsb_secret_[A-Za-z0-9_\-]{20,}/g, what: 'a Supabase secret key', svc: 'Supabase', live: true },
-  { re: /\b\d{8,10}:AA[0-9A-Za-z_\-]{33}\b/g, what: 'a Telegram bot token', svc: 'Telegram', live: true },
-  { re: /\bdop_v1_[a-f0-9]{64}\b/g, what: 'a DigitalOcean token', svc: 'DigitalOcean', live: true },
-  { re: /\bpat[A-Za-z0-9]{14}\.[a-f0-9]{64}\b/g, what: 'an Airtable token', svc: 'Airtable', live: true },
+  { re: /\bAKIA[0-9A-Z]{16}\b/g, what: 'aws-access-key', svc: 'AWS', live: true },
+  { re: /\b(?:sk|rk)_live_[0-9a-zA-Z]{20,}/g, what: 'stripe-live-key', svc: 'Stripe', live: true },
+  { re: /\b(?:sk|rk)_test_[0-9a-zA-Z]{20,}/g, what: 'stripe-test-key', svc: 'Stripe', sev: 'medium' },
+  { re: /\bwhsec_[A-Za-z0-9]{24,}/g, what: 'stripe-webhook-secret', svc: 'Stripe' },
+  { re: /\bgh[pousr]_[A-Za-z0-9]{36,}\b/g, what: 'github-token', svc: 'GitHub', live: true },
+  { re: /\bgithub_pat_[A-Za-z0-9_]{50,}/g, what: 'github-token', svc: 'GitHub', live: true },
+  { re: /\bglpat-[A-Za-z0-9_-]{20,}/g, what: 'gitlab-token', svc: 'GitLab', live: true },
+  { re: /\bxox[abposr]-[A-Za-z0-9-]{10,}/g, what: 'slack-token', svc: 'Slack', live: true },
+  { re: /https:\/\/hooks\.slack\.com\/services\/T[A-Z0-9]+\/B[A-Z0-9]+\/[A-Za-z0-9]{20,}/g, what: 'slack-webhook', svc: 'Slack', sev: 'medium' },
+  { re: /\bAIza[0-9A-Za-z_\-]{35}\b/g, what: 'google-api-key', svc: 'Google Cloud', sev: 'medium', skipIf: /firebase|authDomain|messagingSenderId/i },
+  { re: /\bGOCSPX-[A-Za-z0-9_\-]{20,}/g, what: 'google-client-secret', svc: 'Google Cloud' },
+  { re: /\bsk-ant-[a-z]+\d*-[A-Za-z0-9_\-]{40,}/g, what: 'anthropic-key', svc: 'Anthropic', live: true },
+  { re: /\bsk-(?:proj-|svcacct-|admin-)?[A-Za-z0-9_\-]{16,}T3BlbkFJ[A-Za-z0-9_\-]{16,}/g, what: 'openai-key', svc: 'OpenAI', live: true },
+  { re: /\bsk-(?:proj|svcacct|admin)-[A-Za-z0-9_\-]{40,}/g, what: 'openai-key', svc: 'OpenAI', live: true },
+  { re: /-----BEGIN (?:RSA |EC |DSA |OPENSSH |PGP |ENCRYPTED )?PRIVATE KEY(?: BLOCK)?-----/g, what: 'private-key', svc: null, whole: true },
+  { re: /\bSG\.[A-Za-z0-9_\-]{22}\.[A-Za-z0-9_\-]{43}\b/g, what: 'sendgrid-key', svc: 'SendGrid', live: true },
+  { re: /\bsq0csp-[0-9A-Za-z_\-]{40,}/g, what: 'square-secret', svc: 'Square', live: true },
+  { re: /\bsq0atp-[0-9A-Za-z_\-]{20,}/g, what: 'square-token', svc: 'Square', live: true },
+  { re: /\bEAAA[A-Za-z0-9_\-]{60,}/g, what: 'square-token', svc: 'Square', live: true },
+  { re: /\bshp(?:at|ss|ca|pa)_[a-fA-F0-9]{32}\b/g, what: 'shopify-token', svc: 'Shopify', live: true },
+  { re: /\bhf_[A-Za-z0-9]{30,}\b/g, what: 'huggingface-token', svc: 'Hugging Face', live: true },
+  { re: /\bnpm_[A-Za-z0-9]{36}\b/g, what: 'npm-token', svc: 'npm', live: true },
+  { re: /\bsbp_[a-f0-9]{40}\b/g, what: 'supabase-account-token', svc: 'Supabase', live: true },
+  { re: /\bsb_secret_[A-Za-z0-9_\-]{20,}/g, what: 'supabase-secret-key', svc: 'Supabase', live: true },
+  { re: /\b\d{8,10}:AA[0-9A-Za-z_\-]{33}\b/g, what: 'telegram-token', svc: 'Telegram', live: true },
+  { re: /\bdop_v1_[a-f0-9]{64}\b/g, what: 'digitalocean-token', svc: 'DigitalOcean', live: true },
+  { re: /\bpat[A-Za-z0-9]{14}\.[a-f0-9]{64}\b/g, what: 'airtable-token', svc: 'Airtable', live: true },
 ];
 const JWT = /\beyJ[A-Za-z0-9_-]{10,}\.eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{20,}/g;
 const DB_URL = /\b(?:postgres(?:ql)?|mysql|mariadb|mongodb(?:\+srv)?|rediss?|amqps?)(?:\+\w+)?:\/\/([^:\s\/'"@]+):([^@\s'"]+)@([^\/\s'":?,]+)/g;
@@ -84,16 +91,19 @@ const PASSWORD_NAME = /pass|pwd/i;
 const CONFIG_LANGS = new Set(['yaml', 'yml', 'ini', 'cfg', 'conf', 'properties', 'env', 'toml']);
 
 const snake = (s) => s.replace(/([a-z0-9])([A-Z])/g, '$1_$2').toLowerCase();
+// the kind of secret a variable's name says it holds, as a key of the language table (health.secret.kind.<kind>)
 const kindFromName = (name) => {
   const n = snake(name);
-  if (/pass|pwd/.test(n)) return 'a password';
-  if (/private_?key/.test(n)) return 'a private key';
-  if (/token/.test(n)) return 'an access token';
-  if (/api_?key|apikey/.test(n)) return 'an API key';
-  if (/credential/.test(n)) return 'login credentials';
-  return 'a secret key';
+  if (/pass|pwd/.test(n)) return 'password';
+  if (/private_?key/.test(n)) return 'private-key';
+  if (/token/.test(n)) return 'access-token';
+  if (/api_?key|apikey/.test(n)) return 'api-key';
+  if (/credential/.test(n)) return 'credentials';
+  return 'secret-key';
 };
-const mask = (v, password) => password || v.length < 12 ? `${v.length} characters` : `starts “${v.slice(0, 4)}…”, ${v.length} characters`;
+// the masked hint of a value, as data the build puts into words: its length, and its first four characters unless it
+// is a password or short
+const mask = (v, password) => (password || v.length < 12 ? { len: v.length } : { start: v.slice(0, 4), len: v.length });
 
 function valueLooksReal(v, name) {
   if (/\s/.test(v) || PLACEHOLDER.test(v)) return false;
@@ -137,7 +147,7 @@ function findSecrets(src, f, out) {
       const v = m[0];
       if (isTest && (!fm.live || fm.whole)) continue;
       if (!fm.whole && (/EXAMPLE|xxxx|XXXX|0{10,}/.test(v) || entropy(v) < 3)) continue;
-      add(at(m.index), { what: fm.what, svc: fm.svc, sev: fm.sev || 'high', hint: fm.whole ? 'private key block' : mask(v) });
+      add(at(m.index), { what: fm.what, svc: fm.svc, sev: fm.sev || 'high', hint: fm.whole ? { block: true } : mask(v) });
     }
   }
   if (!isTest) {
@@ -145,12 +155,13 @@ function findSecrets(src, f, out) {
       let payload = null;
       try { payload = JSON.parse(Buffer.from(m[0].split('.')[1].replace(/-/g, '+').replace(/_/g, '/'), 'base64').toString('utf8')); } catch { continue; }
       if (payload?.role !== 'service_role') continue; // "anon" keys are public by design
-      add(at(m.index), { what: 'a Supabase service-role key (full access to your database, skipping all security rules)', svc: 'Supabase', sev: 'high', hint: mask(m[0]) });
+      add(at(m.index), { what: 'supabase-service-role', svc: 'Supabase', sev: 'high', hint: mask(m[0]) });
     }
     for (const m of src.matchAll(DB_URL)) {
       const [, user, pw, host] = m;
       if (LOCAL_HOST.test(host) || PLACEHOLDER.test(pw) || /^[:$%{<]/.test(pw) || pw.length < 4 || /^(password|pass|postgres|root|secret|admin|user)$/i.test(pw)) continue;
-      add(at(m.index), { what: 'a database password inside a connection address', svc: 'your database', sev: 'high', hint: mask(pw, true) });
+      // the service is the owner's own database: `database` is put into words by the build, service names stay as they are
+      add(at(m.index), { what: 'db-url-password', svc: 'database', sev: 'high', hint: mask(pw, true) });
     }
   }
   if (isTest || f.category === 'docs') return;
@@ -424,34 +435,35 @@ function findStripeWebhook(src, f, out) {
 }
 
 // CORS: a server that tells browsers any website may call it. Harmless for a public API without login
-// cookies; with them, any site a signed-in visitor opens could act as them.
+// cookies; with them, any site a signed-in visitor opens could act as them. `how` names the form it was
+// written in, as a key of the language table (health.cors.how.<how>).
 function findCors(src, f, out) {
   const at = lineIndex(src);
   const add = (idx, how, credentials) => out.push({ k: 'cors-any', line: at(idx), how, credentials });
   if (['typescript', 'javascript'].includes(f.lang)) {
     if (/require\(\s*['"]cors['"]\s*\)|from\s+['"]cors['"]/.test(src)) {
-      for (const m of src.matchAll(/\bcors\(\s*\)/g)) add(m.index, 'cors()', false);
+      for (const m of src.matchAll(/\bcors\(\s*\)/g)) add(m.index, 'cors', false);
       for (const m of src.matchAll(/\bcors\(\s*\{([^}]*)\}/g)) {
         const origin = /\borigin\s*:\s*(?:(['"`])\*\1|(true)\b)/.exec(m[1]);
         // '*' with credentials is refused by browsers; origin: true echoes whichever site asks
-        if (origin) add(m.index, origin[2] ? 'cors({ origin: true })' : "cors({ origin: '*' })", !!origin[2] && /\bcredentials\s*:\s*true/.test(m[1]));
+        if (origin) add(m.index, origin[2] ? 'cors-true' : 'cors-any', !!origin[2] && /\bcredentials\s*:\s*true/.test(m[1]));
       }
     }
     const credHeader = /['"]Access-Control-Allow-Credentials['"]\s*[,:]\s*['"`]?true/i.test(src);
     for (const m of src.matchAll(/['"]Access-Control-Allow-Origin['"]\s*[,:]\s*(?:(['"`])\*\1|(req(?:uest)?\.headers(?:\.origin\b|\[\s*['"]origin['"]\s*\]|\.get\(\s*['"]origin['"]\s*\))))/gi)) {
-      add(m.index, m[2] ? 'Access-Control-Allow-Origin set to the caller’s origin' : 'Access-Control-Allow-Origin: *', !!m[2] && credHeader);
+      add(m.index, m[2] ? 'header-echo' : 'header-any', !!m[2] && credHeader);
     }
   } else if (f.lang === 'python') {
     for (const m of src.matchAll(/CORSMiddleware\s*,([\s\S]{0,800}?)\)\s*$/gm)) {
-      if (/allow_origins\s*=\s*\[\s*(['"])\*\1\s*\]|allow_origin_regex\s*=\s*r?(['"])\.\*\2/.test(m[1])) add(m.index, 'CORSMiddleware with allow_origins=["*"]', /allow_credentials\s*=\s*True/.test(m[1]));
+      if (/allow_origins\s*=\s*\[\s*(['"])\*\1\s*\]|allow_origin_regex\s*=\s*r?(['"])\.\*\2/.test(m[1])) add(m.index, 'fastapi', /allow_credentials\s*=\s*True/.test(m[1]));
     }
     for (const m of src.matchAll(/\bCORS\(\s*\w+\s*(?:\)|,([^)]*)\))/g)) {
       const opts = m[1] || '';
       if (/\borigins["']?\s*[:=]\s*(?!(['"])\*\1)/.test(opts)) continue; // a list of allowed sites (origins=… or "origins": …)
-      add(m.index, 'CORS(app) with every origin allowed', /supports_credentials\s*=\s*True/.test(opts));
+      add(m.index, 'flask', /supports_credentials\s*=\s*True/.test(opts));
     }
     const all = /^\s*CORS_(?:ALLOW_ALL_ORIGINS|ORIGIN_ALLOW_ALL)\s*=\s*True\b/m.exec(src);
-    if (all) add(all.index, 'CORS_ALLOW_ALL_ORIGINS = True', /^\s*CORS_ALLOW_CREDENTIALS\s*=\s*True\b/m.test(src));
+    if (all) add(all.index, 'django', /^\s*CORS_ALLOW_CREDENTIALS\s*=\s*True\b/m.test(src));
   }
 }
 
@@ -536,10 +548,29 @@ const WEBHOOK_ADMIN = /\/(manage|admin|setup|settings|config|list|create|registe
 const NOT_USED_KINDS = new Set(['test', 'script', 'infra', 'config', 'worker', 'external']);
 const SPECIAL_FILE = /(^|\/)(index|main|app|server|cli|manage|wsgi|asgi|__init__|__main__|conftest|setup|config|settings|env|middleware|instrumentation|layout|page|route|loading|error|not-found|template|default|global-error|sitemap|robots|manifest|opengraph-image|twitter-image|icon|apple-icon|_app|_document|_error|404|500|models|admin|apps|views|urls|signals|tasks|forms|serializers|celery|gunicorn\.conf|vite-env\.d|worker|sw|service-worker)\.[a-z]+$|\.d\.ts$|\.config\.[a-z]+$|\.stories\.|(^|\/)(pages|migrations|alembic|versions|scripts|bin|tools|seeds?|fixtures?|examples?|docs?|public|static|templates|\.github|e2e|cypress|playwright)\//i;
 const USED_LANGS = new Set(['typescript', 'javascript', 'python', 'vue', 'svelte', 'astro']);
-const plural = (n, w, ws) => `${n} ${n === 1 ? w : ws || w + 's'}`;
 
-export function buildHealth({ graph, scan, arch, root, layers }) {
+/** A number as the map's language writes it (1,500 or 1.500); English as before. */
+const numberFormat = (lang) => { try { return new Intl.NumberFormat(lang === 'en' ? 'en-US' : lang); } catch { return new Intl.NumberFormat('en-US'); } };
+/** `words` with English for the fix requests; a build without a table (older callers, tests) gets English for both. */
+function tables(words, lang) {
+  const en = translator(langStrings('en'), 'en');
+  const own = words ? translator(words, lang || 'en') : en;
+  return { ...own, en, num: (n) => numberFormat(lang || 'en').format(n) };
+}
+/** A secret's masked hint in words: its length, its first characters, a private key block, or a whole file. */
+const hintText = (t, h) => (typeof h === 'string' ? h : h?.file ? t('health.secret.hint.file') : h?.block ? t('health.secret.hint.block') : h?.start ? t('health.secret.hint.starts', { start: h.start, n: h.len }) : t('health.secret.hint.length', { n: h?.len ?? 0 }));
+
+export function buildHealth({ graph, scan, arch, root, layers, words, lang }) {
   const issues = [];
+  // t/tn write in the map's language, te in English (for the fix requests); a kind the table doesn't know is shown as it is
+  const { t, tn, has, num, en } = tables(words, lang);
+  const te = en.t;
+  const kindOf = (tx, k) => (has(`health.secret.kind.${k}`) ? tx(`health.secret.kind.${k}`) : String(k)).replace(/ \(.*\)$/, '');
+  const svcOf = (s) => (s === 'database' ? t('health.secret.svc.database') : s);
+  // "a, b and c", in the map's language
+  const and = (xs) => (xs.length < 2 ? xs.join('') : t('health.and', { a: xs.slice(0, -1).join(', '), b: xs.at(-1) }));
+  const andEn = (xs) => (xs.length < 2 ? xs.join('') : `${xs.slice(0, -1).join(', ')} and ${xs.at(-1)}`);
+  const andMore = (list, max) => list.slice(0, max).join(', ') + (list.length > max ? ` ${t('common.andMore', { n: list.length - max })}` : '');
   const nodeById = new Map(graph.nodes.map((n) => [n.id, n]));
   const fileByPath = new Map(graph.files.map((f) => [f.p, f]));
   const scanByPath = new Map(scan.files.map((f) => [f.path, f]));
@@ -581,7 +612,7 @@ export function buildHealth({ graph, scan, arch, root, layers }) {
     if (!/\.(pem|key|p12|pfx|jks|keystore)$|^id_(rsa|dsa|ecdsa|ed25519)$|service[-_]?account.*\.json$|^credentials?\.json$|firebase-adminsdk.*\.json$|^client_secret.*\.json$|-key\.json$/i.test(base)) continue;
     let head = '';
     try { head = readHead(path.join(root, f.path), 65536); } catch { continue; }
-    if (/PRIVATE KEY|"private_key"\s*:\s*"-----|"client_secret"\s*:\s*"[^"]{8,}/.test(head) || /\.(p12|pfx|jks|keystore)$/i.test(base)) secretFiles.push({ path: f.path, list: [{ k: 'secret', line: 1, what: 'a credentials file (a private key that logs in as your app)', sev: 'high', hint: 'whole file' }], file: true });
+    if (/PRIVATE KEY|"private_key"\s*:\s*"-----|"client_secret"\s*:\s*"[^"]{8,}/.test(head) || /\.(p12|pfx|jks|keystore)$/i.test(base)) secretFiles.push({ path: f.path, list: [{ k: 'secret', line: 1, what: 'credentials-file', sev: 'high', hint: { file: true } }], file: true });
   }
   const secretIssue = (group) => {
     const locations = [], notes = {}, items = [];
@@ -597,23 +628,32 @@ export function buildHealth({ graph, scan, arch, root, layers }) {
         if (s.svc) svcs.add(s.svc);
       }
       if (isFrontend(p)) frontend = true;
-      if (it) notes[it] = (notes[it] ? notes[it] + ' · ' : '') + list.slice(0, 4).map((s) => `${file ? p.split('/').pop() : `line ${s.line}`}: ${s.name ? `${s.name}, ` : ''}${s.what.replace(/ \(.*\)$/, '')} (${s.hint})`).join(' · ') + (list.length > 4 ? ` · +${list.length - 4} more` : '');
+      const note = (s) => {
+        const what = t(s.name ? 'health.secret.noteNamed' : 'health.secret.note', { name: s.name, kind: kindOf(t, s.what), hint: hintText(t, s.hint) });
+        return file ? t('health.atFile', { file: p.split('/').pop(), what }) : t('health.at', { n: s.line, what });
+      };
+      if (it) notes[it] = (notes[it] ? notes[it] + ' · ' : '') + list.slice(0, 4).map(note).join(' · ') + (list.length > 4 ? ` · ${t('common.more', { n: list.length - 4 })}` : '');
     }
     const n = locations.length;
     const sev = group.some((g) => g.list.some((s) => s.sev === 'high')) ? 'high' : 'medium';
     const one = group.length === 1 ? group[0].path : null;
-    const kindText = kinds.size === 1 ? [...kinds][0].replace(/ \(.*\)$/, '') : 'passwords or keys';
+    const kindText = kinds.size === 1 ? kindOf(t, [...kinds][0]) : t('health.secret.kind.mixed');
     return {
       id: 'secret:' + (one || group.map((g) => g.path).join('|')),
       kind: 'secret', severity: sev,
-      title: n === 1 ? `A secret key is written into ${one ? one.split('/').pop() : `${group.length} more files`}` : `${n} passwords or keys are written into ${one ? one.split('/').pop() : `${group.length} more files`}`,
-      detail: `${one ? `${nameOf(one)} (${one})` : plural(group.length, 'file')} contains ${n === 1 ? kindText : `${n} secrets (${kindText})`}. Anyone who can see the code can use ${n === 1 ? 'it' : 'them'} to get into ${svcs.size ? [...svcs].slice(0, 4).join(', ') : 'the services they unlock'} as you${frontend ? ', and this code is sent to every visitor’s browser' : ''}. Treat ${n === 1 ? 'it' : 'them'} as leaked: move ${n === 1 ? 'it' : 'them'} out of the code and replace ${n === 1 ? 'it with a new one' : 'them with new ones'}.`,
+      title: one ? tn('health.secret.title', n, { file: one.split('/').pop() }) : t('health.secret.title.more', { n, m: group.length }),
+      detail: tn('health.secret.detail', n, {
+        where: one ? `${nameOf(one)} (${one})` : tn('count.file', group.length),
+        what: kindText,
+        services: svcs.size ? [...svcs].slice(0, 4).map(svcOf).join(', ') : tn('health.secret.detail.services', n),
+        browser: frontend ? t('health.secret.detail.browser') : '',
+      }),
       items, notes, locations,
       fix: [
         `Security fix: hard-coded secrets. Do not print, echo or repeat any secret value in your replies, commits or logs.`,
         ``,
         `These lines contain ${n === 1 ? 'a secret' : 'secrets'} written directly in the code:`,
-        ...group.flatMap(({ path: p, list, file }) => list.map((s) => `- ${p}${file ? ' (the whole file)' : `:${s.line}`}: ${s.name ? `${s.name} — ` : ''}${s.what.replace(/ \(.*\)$/, '')}`)),
+        ...group.flatMap(({ path: p, list, file }) => list.map((s) => `- ${p}${file ? ' (the whole file)' : `:${s.line}`}: ${s.name ? `${s.name} — ` : ''}${kindOf(te, s.what)}`)),
         ``,
         `For each one:`,
         `1. Replace the literal with an environment variable lookup (${group.some((g) => /\.py$/.test(g.path)) ? `os.environ["NAME"] in Python` : ''}${group.some((g) => /\.py$/.test(g.path)) && group.some((g) => /\.[jt]sx?$/.test(g.path)) ? ', ' : ''}${group.some((g) => /\.[jt]sx?$/.test(g.path)) ? 'process.env.NAME in JavaScript/TypeScript' : ''}${!group.some((g) => /\.(py|[jt]sx?)$/.test(g.path)) ? 'or a secret manager reference' : ''}), using a clear variable name. If the app can't run without it, fail with a clear error when it is missing instead of falling back to a hard-coded value.`,
@@ -651,11 +691,9 @@ export function buildHealth({ graph, scan, arch, root, layers }) {
     const it = itemFor(f.path);
     issues.push({
       id: 'env-file:' + f.path, kind: 'env-file', severity: tracked ? 'high' : 'medium',
-      title: tracked ? 'Your private settings file is saved in git' : 'Your private settings file isn’t hidden from git',
-      detail: tracked
-        ? `${f.path} holds ${plural(secretVars.length, 'password or key', 'passwords and keys')} and is committed, so everyone with access to the code (and its history) can read them. This file is meant to stay on your computer only.`
-        : `${f.path} holds ${plural(secretVars.length, 'password or key', 'passwords and keys')} and isn’t listed in .gitignore, so the next commit will upload it with your code.`,
-      items: it ? [it] : [], notes: it ? { [it]: `${f.path}: ${secretVars.slice(0, 6).map((v) => v.name).join(', ')}${secretVars.length > 6 ? '…' : ''}` } : {},
+      title: t(tracked ? 'health.env-file.title.tracked' : 'health.env-file.title.untracked'),
+      detail: t(tracked ? 'health.env-file.detail.tracked' : 'health.env-file.detail.untracked', { file: f.path, keys: tn('health.env-file.keys', secretVars.length) }),
+      items: it ? [it] : [], notes: it ? { [it]: t('health.atFile', { file: f.path, what: `${secretVars.slice(0, 6).map((v) => v.name).join(', ')}${secretVars.length > 6 ? '…' : ''}` }) } : {},
       locations: secretVars.map((v) => ({ file: f.path, line: v.line })),
       fix: [
         `Security fix: ${f.path} contains secrets and ${tracked ? 'is committed to git' : 'is not ignored by git'}. Do not print or repeat any value from it.`,
@@ -694,14 +732,18 @@ export function buildHealth({ graph, scan, arch, root, layers }) {
       const it = itemFor(loc.file);
       if (!it) continue;
       if (!items.includes(it)) items.push(it);
-      const note = `line ${loc.line}: ${v.name}`;
+      const note = t('health.at', { n: loc.line, what: v.name });
       if (!(notes[it] || '').includes(note)) notes[it] = (notes[it] ? notes[it] + ' · ' : '') + note;
     }
     const names = vars.map((v) => v.name);
     issues.push({
       id: 'public-env', kind: 'public-env-secret', severity: sev,
-      title: vars.length === 1 ? `${names[0]} is sent to every visitor’s browser` : `${vars.length} secret keys are sent to every visitor’s browser`,
-      detail: `Settings whose names start with NEXT_PUBLIC_, VITE_ and the like are copied into the code your site sends to every visitor, where anyone can read them in their browser’s developer tools. ${vars.length === 1 ? `${names[0]} looks like a secret key` : `${names.slice(0, 4).join(', ')}${vars.length > 4 ? '…' : ''} look like secret keys`}${svcs.length ? ` (for ${svcs.slice(0, 4).join(', ')})` : ''}, so anyone could use ${vars.length === 1 ? 'it' : 'them'} as you: run up your bill, send messages as you, or reach your data.${sev === 'medium' ? ' Right now only server code seems to read it, so it may not have reached a browser yet, but the name invites that.' : ''}`,
+      title: tn('health.public-env.title', vars.length, { name: names[0] }),
+      detail: tn('health.public-env.detail', vars.length, {
+        name: names[0], names: `${names.slice(0, 4).join(', ')}${vars.length > 4 ? '…' : ''}`,
+        for: svcs.length ? t('health.public-env.detail.for', { services: svcs.slice(0, 4).join(', ') }) : '',
+        serverOnly: sev === 'medium' ? t('health.public-env.detail.serverOnly') : '',
+      }),
       items, notes, locations,
       fix: [
         `Security fix: secret keys in public environment variables (the browser gets every variable with these prefixes). Do not print, echo or repeat any key value.`,
@@ -738,17 +780,17 @@ export function buildHealth({ graph, scan, arch, root, layers }) {
       const open = [...tables.entries()].filter(([name, t]) => name.startsWith('public.') && t.rls !== true);
       if (open.length) {
         const items = [], notes = {};
-        for (const [name, t] of open) {
-          const it = itemFor(t.file);
+        for (const [name, tb] of open) {
+          const it = itemFor(tb.file);
           if (!it) continue;
           if (!items.includes(it)) items.push(it);
-          notes[it] = (notes[it] ? notes[it] + ' · ' : '') + `line ${t.line}: ${short(name)} (row-level security ${t.off ? 'switched off' : 'never switched on'})`;
+          notes[it] = (notes[it] ? notes[it] + ' · ' : '') + t(tb.off ? 'health.rls.note.off' : 'health.rls.note.never', { n: tb.line, table: short(name) });
         }
         const list = open.map(([name]) => short(name));
         issues.push({
           id: 'rls:' + repo, kind: 'database-rules', severity: 'high',
-          title: open.length === 1 ? `Anyone can read and change your ${list[0]} table` : `Anyone can read and change ${open.length} of your database tables`,
-          detail: `Your app talks to Supabase with a public key that every visitor’s browser has. Row-level security is what stops one person from reading or changing someone else’s rows, and it’s off for ${open.length === 1 ? `the ${list[0]} table` : `${list.slice(0, 6).join(', ')}${list.length > 6 ? ` and ${list.length - 6} more` : ''}`}. Without it, anyone can use that key to read, change or delete every row${open.length === 1 ? '' : ' in them'}. If your app only reaches the database from its own server, the risk is lower, but switching it on is still the safe default.`,
+          title: tn('health.rls.title', open.length, { table: list[0] }),
+          detail: tn('health.rls.detail', open.length, { table: list[0], tables: andMore(list, 6) }),
           items, notes,
           locations: open.map(([, t]) => t.off || { file: t.file, line: t.line }),
           fix: [
@@ -766,19 +808,24 @@ export function buildHealth({ graph, scan, arch, root, layers }) {
       }
       const loose = policies.filter((pol) => tables.get(pol.table)?.rls === true);
       if (loose.length) {
-        const verb = (cmd) => ({ insert: 'add', update: 'change', delete: 'delete' }[cmd] || 'add, change and delete');
-        const rowsOf = (cmd, t) => `${verb(cmd)} rows ${{ insert: 'to', delete: 'from' }[cmd] || 'in'} ${t}`;
+        // "add rows to T", "change rows in T", "delete rows from T", or all three
+        const ROWS = { insert: 'health.open-policy.rows.insert', update: 'health.open-policy.rows.update', delete: 'health.open-policy.rows.delete' };
+        const rowsOf = (cmd, table) => t(ROWS[cmd] || 'health.open-policy.rows.all', { table });
         const items = [], notes = {};
         for (const pol of loose) {
           const it = itemFor(pol.file);
           if (!it) continue;
           if (!items.includes(it)) items.push(it);
-          notes[it] = (notes[it] ? notes[it] + ' · ' : '') + `line ${pol.line}: “${pol.policy}” lets anyone ${rowsOf(pol.cmd, short(pol.table))}`;
+          notes[it] = (notes[it] ? notes[it] + ' · ' : '') + t('health.open-policy.note', { n: pol.line, policy: pol.policy, rows: rowsOf(pol.cmd, short(pol.table)) });
         }
         issues.push({
           id: 'open-policy:' + repo, kind: 'database-rules', severity: 'medium',
-          title: loose.length === 1 ? `A database rule lets anyone change your ${short(loose[0].table)} table` : `${loose.length} database rules let anyone change your data`,
-          detail: `${loose.length === 1 ? `The rule “${loose[0].policy}” lets anyone` : `These rules let anyone`}${loose.some((pol) => pol.signedOut) ? ', even people who aren’t signed in,' : ''} ${loose.length === 1 ? rowsOf(loose[0].cmd, short(loose[0].table)) : `add, change or delete rows in ${[...new Set(loose.map((pol) => short(pol.table)))].slice(0, 5).join(', ')}`}. If a table is a public form (like a waitlist or contact form), letting anyone add rows is fine; otherwise limit it to signed-in users and their own rows.`,
+          title: tn('health.open-policy.title', loose.length, { table: short(loose[0].table) }),
+          detail: tn('health.open-policy.detail', loose.length, {
+            policy: loose[0].policy, rows: rowsOf(loose[0].cmd, short(loose[0].table)),
+            signedOut: loose.some((pol) => pol.signedOut) ? t('health.open-policy.signedOut') : '',
+            tables: [...new Set(loose.map((pol) => short(pol.table)))].slice(0, 5).join(', '),
+          }),
           items, notes,
           locations: loose.map((pol) => ({ file: pol.file, line: pol.line })),
           fix: [
@@ -794,7 +841,8 @@ export function buildHealth({ graph, scan, arch, root, layers }) {
 
   // ---------- Firebase security rules that let anyone in ----------
   const today = new Date();
-  const longDate = (d) => d.toLocaleDateString('en-US', { timeZone: 'UTC', month: 'long', day: 'numeric', year: 'numeric' });
+  // the date as the map's language writes it (March 1, 2027 or 1. März 2027)
+  const longDate = (d) => { const o = { timeZone: 'UTC', month: 'long', day: 'numeric', year: 'numeric' }; try { return d.toLocaleDateString(lang && lang !== 'en' ? lang : 'en-US', o); } catch { return d.toLocaleDateString('en-US', o); } };
   for (const f of scan.files) {
     const base = f.path.split('/').pop();
     if (!live(f.path) || !(/\.rules$/i.test(base) || /^database(\.[\w-]+)?\.rules\.json$/i.test(base))) continue;
@@ -816,37 +864,46 @@ export function buildHealth({ graph, scan, arch, root, layers }) {
     const what = files ? 'files' : 'data';
     const deploy = { Firestore: 'firestore:rules', Storage: 'storage', 'Realtime Database': 'database' }[service];
     const shown = [...writes, ...deepWrites, ...reads, ...(expired ? [expired] : [])];
+    // a rule in words, with the table it is given: `allow read, write: if true at /…`, `".read": true for the whole database`
+    const whereOf = (tx, r) => (r.where === null ? tx('health.firebase-rules.wholeDb') : r.where);
+    const ruleText = (tx, r) => (rtdb
+      ? tx('health.firebase-rules.rule.rtdb', { key: r.key, value: r.value, where: whereOf(tx, r) })
+      : tx(r.cond ? 'health.firebase-rules.rule.allow' : 'health.firebase-rules.rule.allowAny', { ops: r.ops, cond: r.cond, where: whereOf(tx, r) }));
+    // the words differ for files (Storage) and data (Firestore, Realtime Database)
+    const K = files
+      ? { until: 'health.firebase-rules.until.detail.files', writesTitle: 'health.firebase-rules.writes.title.files', writes: 'health.firebase-rules.writes.detail.files', reads: 'health.firebase-rules.reads.detail.files' }
+      : { until: 'health.firebase-rules.until.detail.data', writesTitle: 'health.firebase-rules.writes.title.data', writes: 'health.firebase-rules.writes.detail.data', reads: 'health.firebase-rules.reads.detail.data' };
     let title, detail, severity;
     if (until && writes.length) {
       severity = 'high';
-      title = `Your Firebase ${service} is open to anyone until ${longDate(until.until)}`;
-      detail = `${base} still has Firebase’s “test mode” rules: anyone can read and change ${files ? 'every file' : 'everything'} until ${longDate(until.until)}, without signing in or using your app. After that date every request is refused and the app stops working, so replace them with real rules rather than moving the date.`;
+      title = t('health.firebase-rules.until.title', { service, date: longDate(until.until) });
+      detail = t(K.until, { file: base, date: longDate(until.until) });
     } else if (writes.length) {
       severity = 'high';
-      title = files ? 'Anyone can upload, replace or delete your Firebase files' : `Anyone can change or delete your Firebase ${service} data`;
-      detail = `A rule in ${base} (line ${writes[0].line}, at ${writes[0].where}) lets anyone, signed in or not, ${files ? 'upload, replace or delete files' : 'add, change or delete data'}. Your app’s Firebase settings are in every visitor’s browser, so anyone can use them to reach your ${service} directly, without going through your app.`;
+      title = t(K.writesTitle, { service });
+      detail = t(K.writes, { file: base, n: writes[0].line, where: whereOf(t, writes[0]), service });
     } else if (deepWrites.length || reads.length) {
       severity = 'medium';
-      title = reads.length && !deepWrites.length ? `Anyone can read everything in your Firebase ${service}` : `Anyone can change part of your Firebase ${service}`;
+      title = t(reads.length && !deepWrites.length ? 'health.firebase-rules.reads.title' : 'health.firebase-rules.partial.title', { service });
       detail = [
-        reads.length ? `A rule in ${base} (line ${reads[0].line}) lets anyone read every ${files ? 'file' : 'record'}, including data that may belong to your users. If everything there is meant to be public, that’s fine; otherwise it needs a sign-in check.` : '',
-        deepWrites.length ? `A rule in ${base} (line ${deepWrites[0].line}) lets anyone ${deepWrites[0].createOnly ? 'add to' : 'change'} ${deepWrites[0].where} without signing in. If that’s a public form (like a waitlist or contact form), that can be fine; otherwise it needs a sign-in check.` : '',
+        reads.length ? t(K.reads, { file: base, n: reads[0].line }) : '',
+        deepWrites.length ? t(deepWrites[0].createOnly ? 'health.firebase-rules.partial.detail.add' : 'health.firebase-rules.partial.detail.change', { file: base, n: deepWrites[0].line, where: whereOf(t, deepWrites[0]) }) : '',
       ].filter(Boolean).join(' ');
     } else {
       severity = 'medium';
-      title = `Your Firebase ${service} test-mode rules ran out on ${longDate(expired.until)}`;
-      detail = `${base} has Firebase’s “test mode” rules, which stopped allowing access on ${longDate(expired.until)}. Every read and write is now refused, so the parts of the app that use ${service} won’t work. Replace them with real rules instead of moving the date, which would open everything to anyone again.`;
+      title = t('health.firebase-rules.expired.title', { service, date: longDate(expired.until) });
+      detail = t('health.firebase-rules.expired.detail', { file: base, date: longDate(expired.until), service });
     }
     const it = itemFor(f.path);
     issues.push({
       id: 'firebase-rules:' + f.path, kind: 'database-rules', severity, title, detail,
-      items: it ? [it] : [], notes: it ? { [it]: shown.slice(0, 4).map((r) => `line ${r.line}: ${r.text}`).join(' · ') } : {},
+      items: it ? [it] : [], notes: it ? { [it]: shown.slice(0, 4).map((r) => t('health.at', { n: r.line, what: ruleText(t, r) })).join(' · ') } : {},
       locations: shown.map((r) => ({ file: f.path, line: r.line })),
       fix: [
         `Security fix: Firebase ${service} security rules in ${f.path}.`,
         ``,
         `These rules let anyone in (or have expired):`,
-        ...shown.map((r) => `- line ${r.line}: ${r.text}`),
+        ...shown.map((r) => `- line ${r.line}: ${ruleText(te, r)}`),
         ``,
         `1. Read how the app uses each ${rtdb ? 'path' : files ? 'storage folder' : 'collection'}: what each screen reads and writes, and which data belongs to a user (for example ${files ? 'files under a folder named after the user’s uid' : 'documents keyed by the user’s uid, or with an ownerId field'}).`,
         `2. Rewrite the rules so signed-in users can only read and write their own ${what} (${rtdb ? 'auth != null && auth.uid === $uid' : files ? 'request.auth != null && request.auth.uid == userId' : 'request.auth != null && request.auth.uid == resource.data.ownerId'}), public content is read-only, and everything else is denied. Don't use test-mode dates.`,
@@ -867,9 +924,9 @@ export function buildHealth({ graph, scan, arch, root, layers }) {
     const next = /(^|\/)app\/.*route\.[jt]s$|(^|\/)pages\/api\//.test(file);
     issues.push({
       id: 'stripe-webhook:' + file, kind: 'stripe-webhook', severity: 'high',
-      title: `Anyone could fake a Stripe payment in ${nameOf(file)}`,
-      detail: `${file.split('/').pop()} acts on Stripe events (like “${x.events[0]}”) without checking Stripe’s signature, so anyone who finds the address can send a fake “payment succeeded” message and get orders, credits or a subscription for free. Stripe signs every real event; checking that signature takes a few lines.`,
-      items, notes: Object.fromEntries(items.map((id) => [id, id.startsWith('r:') ? 'Receives Stripe events without checking they’re real' : `line ${x.line}: handles ${x.events.join(', ')} without checking Stripe’s signature`])),
+      title: t('health.stripe-webhook.title', { name: nameOf(file) }),
+      detail: t('health.stripe-webhook.detail', { file: file.split('/').pop(), event: x.events[0] }),
+      items, notes: Object.fromEntries(items.map((id) => [id, id.startsWith('r:') ? t('health.stripe-webhook.note.route') : t('health.stripe-webhook.note.file', { n: x.line, events: x.events.join(', ') })])),
       locations: [{ file, line: x.line }],
       fix: [
         `Security fix in ${file}: verify Stripe webhook signatures before acting on any event. Do not print any secret values.`,
@@ -894,24 +951,26 @@ export function buildHealth({ graph, scan, arch, root, layers }) {
   if (cors.length) {
     const cred = cors.filter((c) => c.credentials);
     const filesC = [...new Set(cors.map((c) => c.file))];
+    // the form it was written in (cors(), a header, a Flask or Django setting), from the table; an unknown one as it is
+    const howText = (tx, c) => (has(`health.cors.how.${c.how}`) ? tx(`health.cors.how.${c.how}`) : String(c.how));
     const items = [], notes = {};
     for (const c of cors) {
       const it = itemFor(c.file);
       if (!it) continue;
       if (!items.includes(it)) items.push(it);
-      notes[it] = (notes[it] ? notes[it] + ' · ' : '') + `line ${c.line}: ${c.how}${c.credentials ? ', with login cookies' : ''}`;
+      notes[it] = (notes[it] ? notes[it] + ' · ' : '') + t(c.credentials ? 'health.cors.note.credentials' : 'health.cors.note', { n: c.line, how: howText(t, c) });
     }
     issues.push({
       id: 'cors', kind: 'cors', severity: cred.length ? 'medium' : 'low',
-      title: cred.length ? 'Any website could act as your signed-in users' : 'Any website can call your server from a visitor’s browser',
+      title: t(cred.length ? 'health.cors.title.credentials' : 'health.cors.title.plain'),
       detail: cred.length
-        ? `${cred[0].file.split('/').pop()} lets any website call this server from a visitor’s browser and send along their login cookies. So a site a signed-in user happens to visit could quietly read their data or act as them. Allow only your own app’s address instead.`
-        : `${filesC.length === 1 ? filesC[0].split('/').pop() : `${filesC.length} files`} tell browsers that any website may call this server. That’s fine for a public API that doesn’t use login cookies (for example one that checks a token in the Authorization header); otherwise, allow only your own app’s address.`,
+        ? t('health.cors.detail.credentials', { file: cred[0].file.split('/').pop() })
+        : t('health.cors.detail.plain', { files: filesC.length === 1 ? filesC[0].split('/').pop() : tn('count.file', filesC.length) }),
       items, notes,
       locations: cors.map((c) => ({ file: c.file, line: c.line })),
       fix: [
         `Security review: CORS settings that allow every website:`,
-        ...cors.map((c) => `- ${c.file}:${c.line}: ${c.how}${c.credentials ? ' (with credentials)' : ''}`),
+        ...cors.map((c) => `- ${c.file}:${c.line}: ${howText(te, c)}${c.credentials ? ' (with credentials)' : ''}`),
         ``,
         `First tell me in plain words whether this server uses login cookies or sessions, and which websites legitimately call it. Then replace the allow-everything setting with an explicit list of allowed origins read from an environment variable (for example ALLOWED_ORIGINS=https://myapp.com,http://localhost:3000). Keep credentials only if the app logs in with cookies, and never combine them with "*" or with echoing back whatever origin asks. Show me the change before making it, and change nothing else.`,
       ].join('\n'),
@@ -990,10 +1049,10 @@ export function buildHealth({ graph, scan, arch, root, layers }) {
       const list = pr.misplaced;
       issues.push({
         id: 'misplaced-guard:' + repo, kind: 'unprotected-endpoint', severity: 'high',
-        title: 'A login check is in the wrong place, so it does nothing',
-        detail: `On ${plural(list.length, 'endpoint')} the login check (@${list[0].fnd.misplaced}) is written above the route line instead of below it. Flask only sees what's below, so ${list.length === 1 ? 'it is' : 'they are'} open to anyone even though ${list.length === 1 ? 'it looks' : 'they look'} protected.`,
+        title: t('health.misplaced-guard.title'),
+        detail: tn('health.misplaced-guard.detail', list.length, { endpoints: tn('count.endpoint', list.length), guard: list[0].fnd.misplaced }),
         items: list.slice(0, 24).map((e) => 'r:' + e.i),
-        notes: Object.fromEntries(list.slice(0, 24).map((e) => ['r:' + e.i, `@${e.fnd.misplaced} sits above the route line, so it is skipped`])),
+        notes: Object.fromEntries(list.slice(0, 24).map((e) => ['r:' + e.i, t('health.misplaced-guard.note', { guard: e.fnd.misplaced })])),
         locations: list.map((e) => ({ file: e.r.f, line: e.r.l })),
         fix: [`Security fix: these endpoints have their auth decorator above the route decorator, so the framework registers the unprotected function:`, ...list.map(routeLine), ``, `Move each auth decorator directly below the @…route(...) line (route decorator first, then the auth decorator, then def). Change nothing else, then run the tests that cover these endpoints.`].join('\n'),
       });
@@ -1004,10 +1063,10 @@ export function buildHealth({ graph, scan, arch, root, layers }) {
       const list = pr.open.sort((a, b) => b.write - a.write);
       issues.push({
         id: 'no-auth:' + repo, kind: 'unprotected-endpoint', severity: 'medium',
-        title: `None of ${repo ? `${repo}’s` : 'your'} endpoints check who is calling`,
-        detail: `${plural(list.length, 'endpoint')} answer anyone who knows the address, with no login check in the code. That's fine only if this server is private (for example behind a company network or a gateway that checks logins); otherwise anyone could read or change its data.`,
+        title: t(repo ? 'health.no-auth.title.repo' : 'health.no-auth.title.yours', { repo }),
+        detail: t('health.no-auth.detail', { endpoints: tn('count.endpoint', list.length) }),
         items: list.slice(0, 24).map((e) => 'r:' + e.i),
-        notes: Object.fromEntries(list.slice(0, 24).map((e) => ['r:' + e.i, e.write ? 'Changes data, no login check' : 'No login check'])),
+        notes: Object.fromEntries(list.slice(0, 24).map((e) => ['r:' + e.i, t(e.write ? 'health.note.writesNoLogin' : 'health.note.noLogin')])),
         locations: list.map((e) => ({ file: e.r.f, line: e.r.l })),
         fix: [`Review access control${repo ? ` in ${repo}` : ''}. None of these endpoints verify the caller in code:`, ...list.slice(0, 40).map(routeLine), list.length > 40 ? `- …and ${list.length - 40} more` : null, ``, `First tell me in plain words whether this server is reachable from the internet and whether anything in front of it (gateway, network rules) checks logins. If it is public, propose the smallest safe way to require login for the data-changing endpoints (POST/PUT/PATCH/DELETE) first, show me the plan, and wait for my OK before changing code.`].filter((x) => x !== null).join('\n'),
       });
@@ -1021,29 +1080,28 @@ export function buildHealth({ graph, scan, arch, root, layers }) {
       const writes = list.filter((e) => e.write && !e.webhook), hooks = list.filter((e) => e.webhook), reads = list.filter((e) => !e.write && !e.webhook);
       // many providers can't sign webhooks at all, so an unsigned one alone stays low
       const sev = writes.length ? 'high' : reads.length > 2 ? 'medium' : 'low';
-      const lang = scanByPath.get(file)?.lang;
+      const fileLang = scanByPath.get(file)?.lang;
       const fileGuarded = pr.guardedIn.get(file) || 0;
-      const sv = (n, one, many) => `${n} ${n === 1 ? one : many}`;
       const parts = [];
-      if (writes.length) parts.push(sv(writes.length, 'endpoint that changes data (create, update or delete)', 'endpoints that change data (create, update or delete)'));
-      if (reads.length) parts.push(sv(reads.length, 'endpoint that returns data', 'endpoints that return data'));
+      if (writes.length) parts.push(tn('health.open-endpoints.writes', writes.length));
+      if (reads.length) parts.push(tn('health.open-endpoints.reads', reads.length));
       const nOpen = writes.length + reads.length;
-      const hookText = hooks.length ? `${sv(hooks.length, 'webhook (an automatic message from another service) is', 'webhooks (automatic messages from another service) are')} accepted without checking that ${hooks.length === 1 ? 'it really comes' : 'they really come'} from that service, so anyone could send fake ones. Some providers can't sign their messages; if so, that's expected.` : '';
+      const hookText = hooks.length ? tn('health.open-endpoints.hooks', hooks.length) : '';
       issues.push({
         id: 'open-endpoints:' + file, kind: 'unprotected-endpoint', severity: sev,
-        title: writes.length ? `Anyone could change data through ${nameOf(file)}` : hooks.length ? `Anyone could send fake events to ${nameOf(file)}` : `Anyone could read data from ${nameOf(file)}`,
+        title: t(writes.length ? 'health.open-endpoints.title.writes' : hooks.length ? 'health.open-endpoints.title.hooks' : 'health.open-endpoints.title.reads', { name: nameOf(file) }),
         detail: [
-          parts.length ? `${file.split('/').pop()} has ${parts.join(' and ')} with no login check, so anyone who finds the address can use ${nOpen === 1 ? 'it' : 'them'}${fileGuarded > 0 ? ` (${sv(fileGuarded, 'other endpoint', 'other endpoints')} in the same file ${fileGuarded === 1 ? 'is' : 'are'} protected)` : ''}. If ${nOpen === 1 ? 'it is' : 'some are'} meant to be public, that's fine; otherwise ${nOpen === 1 ? 'it needs' : 'they need'} a login check.` : '',
-          parts.length && hooks.length ? `It also accepts ${sv(hooks.length, 'webhook', 'webhooks')} without checking who sent ${hooks.length === 1 ? 'it' : 'them'}.` : hookText,
+          parts.length ? tn('health.open-endpoints.detail', nOpen, { file: file.split('/').pop(), parts: and(parts), guarded: fileGuarded > 0 ? tn('health.open-endpoints.guarded', fileGuarded) : '' }) : '',
+          parts.length && hooks.length ? tn('health.open-endpoints.alsoHooks', hooks.length) : hookText,
         ].filter(Boolean).join(' '),
         items: list.slice(0, 24).map((e) => 'r:' + e.i),
-        notes: Object.fromEntries(list.slice(0, 24).map((e) => ['r:' + e.i, e.webhook ? 'Webhook with no visible signature check' : e.write ? 'Changes data, no login check' : 'Returns data, no login check'])),
+        notes: Object.fromEntries(list.slice(0, 24).map((e) => ['r:' + e.i, t(e.webhook ? 'health.note.webhook' : e.write ? 'health.note.writesNoLogin' : 'health.note.readsNoLogin')])),
         locations: list.map((e) => ({ file: e.r.f, line: e.r.l })),
         fix: [
           `Security fix in ${file}: these endpoints don't check who is calling:`,
           ...list.map((e) => routeLine(e) + (e.webhook ? ' [webhook]' : '')),
           ``,
-          `For each endpoint that isn't meant to be public, add ${guardHint(file, lang)}.`,
+          `For each endpoint that isn't meant to be public, add ${guardHint(file, fileLang)}.`,
           hooks.length ? `For webhooks, verify the provider's signature (using its signing secret from an environment variable) before doing anything, and reject requests that fail.` : null,
           `If an endpoint is intentionally public (for example a public page or a health check), leave it and tell me why. Don't change anything else; afterwards list exactly which endpoints you protected and run the related tests.`,
         ].filter((x) => x !== null).join('\n'),
@@ -1084,14 +1142,14 @@ export function buildHealth({ graph, scan, arch, root, layers }) {
     const merged = groups.length > MAX ? [...groups.slice(0, MAX - 1), ['', groups.slice(MAX - 1).flatMap(([, l]) => l)]] : groups;
     for (const [nid, list] of merged) {
       list.sort((a, b) => b.loc - a.loc);
-      const where = nid ? label(nid) : 'other areas';
+      const where = nid ? label(nid) : t('health.unused.otherAreas');
       const lines = list.reduce((s, f) => s + f.loc, 0);
       issues.push({
         id: 'unused:' + (nid || 'other'), kind: 'unused-file', severity: 'low',
-        title: list.length === 1 ? `A file in ${where} looks unused` : `${list.length} files in ${where} look unused`,
-        detail: `Nothing in the app imports or calls ${list.length === 1 ? 'this file' : 'these files'} (${lines.toLocaleString('en-US')} lines). Leftover code confuses AI assistants, which may edit or copy the wrong version. Double-check before deleting: some files are loaded in ways the map can't see.`,
+        title: tn('health.unused.title', list.length, { where }),
+        detail: tn('health.unused.detail', list.length, { lines: tn('count.line', lines, { n: num(lines) }) }),
         items: list.slice(0, 24).map((f) => 'f:' + f.p),
-        notes: Object.fromEntries(list.slice(0, 24).map((f) => ['f:' + f.p, `Nothing uses this file (${f.loc.toLocaleString('en-US')} lines)`])),
+        notes: Object.fromEntries(list.slice(0, 24).map((f) => ['f:' + f.p, t('health.unused.note', { lines: tn('count.line', f.loc, { n: num(f.loc) }) })])),
         locations: list.map((f) => ({ file: f.p, line: 1 })),
         fix: [`Cleanup check: these files look unused (nothing imports or calls them):`, ...list.slice(0, 40).map((f) => `- ${f.p}`), list.length > 40 ? `- …and ${list.length - 40} more` : null, ``, `For each file, search the codebase (including configs, scripts, HTML templates and dynamic imports) to confirm nothing uses it. Then tell me which ones are safe to delete and which are actually used, with one line of evidence each. Don't delete anything until I confirm.`].filter((x) => x !== null).join('\n'),
       });
@@ -1104,10 +1162,10 @@ export function buildHealth({ graph, scan, arch, root, layers }) {
     const huge = big.filter((f) => f.loc >= 2000);
     issues.push({
       id: 'large-files', kind: 'large-file', severity: huge.length ? 'medium' : 'low',
-      title: big.length === 1 ? 'One file is very large' : `${big.length} files are very large`,
-      detail: `${big.length === 1 ? 'This file has' : 'These files each have'} over 1,000 lines${huge.length ? ` (the biggest has ${big[0].loc.toLocaleString('en-US')})` : ''}. AI assistants read and edit big files less reliably: they lose track of what's where and can break one part while fixing another. Splitting them into smaller files by job makes future changes safer.`,
+      title: tn('health.large-files.title', big.length),
+      detail: tn('health.large-files.detail', big.length, { biggest: huge.length ? t('health.large-files.biggest', { n: num(big[0].loc) }) : '' }),
       items: big.slice(0, 24).map((f) => 'f:' + f.p),
-      notes: Object.fromEntries(big.slice(0, 24).map((f) => ['f:' + f.p, `${f.loc.toLocaleString('en-US')} lines${f.tooLarge ? ': too big for Floorplan to read, so what it connects to and any secrets in it weren’t checked' : ''}`])),
+      notes: Object.fromEntries(big.slice(0, 24).map((f) => ['f:' + f.p, tn('count.line', f.loc, { n: num(f.loc) }) + (f.tooLarge ? t('health.large-files.unread') : '')])),
       locations: big.map((f) => ({ file: f.p, line: 1 })),
       fix: [`Refactor plan: these files are very large:`, ...big.slice(0, 15).map((f) => `- ${f.p} (${f.loc.toLocaleString('en-US')} lines)`), ``, `Start with ${big[0].p}. Read it and propose how to split it into smaller files, each with one clear job (for example by feature or by type of work), keeping every public function name and behaviour the same. Show me the plan first. After I approve, move code in small steps, update the imports, and run the tests after each step. Don't change behaviour.`].join('\n'),
     });
@@ -1120,10 +1178,10 @@ export function buildHealth({ graph, scan, arch, root, layers }) {
     const filesL = [...new Set(local.map((x) => x.file))];
     issues.push({
       id: 'localhost-url', kind: 'hardcoded-url', severity: 'low',
-      title: 'The app points at your own computer’s address',
-      detail: `${filesL.length === 1 ? 'A frontend file' : `${filesL.length} frontend files`} call${filesL.length === 1 ? 's' : ''} a fixed “localhost” address. That only works on your machine; once the app is online those calls will fail for everyone else.`,
+      title: t('health.localhost-url.title'),
+      detail: tn('health.localhost-url.detail', filesL.length),
       items: filesL.slice(0, 24).map((p) => 'f:' + p),
-      notes: Object.fromEntries(filesL.slice(0, 24).map((p) => ['f:' + p, `localhost address on line ${local.filter((x) => x.file === p).map((x) => x.line).join(', ')}`])),
+      notes: Object.fromEntries(filesL.slice(0, 24).map((p) => ['f:' + p, t('health.localhost-url.note', { lines: local.filter((x) => x.file === p).map((x) => x.line).join(', ') })])),
       locations: local,
       fix: [`These frontend lines use a hard-coded localhost URL:`, ...local.map((x) => `- ${x.file}:${x.line}`), ``, `Replace each with the project's existing API base URL setting (or add one read from a public environment variable such as NEXT_PUBLIC_API_URL / VITE_API_URL, with the localhost value only in .env.development). Don't change anything else.`].join('\n'),
     });
@@ -1134,45 +1192,44 @@ export function buildHealth({ graph, scan, arch, root, layers }) {
   // doesn't mention. Only listed writers count, so the second finding is how a missing writer comes to light.
   const itemName = (id) => (id.startsWith('n:') ? label(id.slice(2)) : nameOf(id.slice(2)));
   const itemPath = (id) => (id.startsWith('n:') ? (nodeById.get(id.slice(2))?.paths || []).join(', ') || id.slice(2) : id.slice(2));
-  const and = (xs) => (xs.length < 2 ? xs.join('') : `${xs.slice(0, -1).join(', ')} and ${xs.at(-1)}`);
-  const entryName = (e) => (e.items.length === 1 ? itemName(e.items[0]) : `${e.ref} (${plural(e.items.length, 'match', 'matches')})`);
+  const entryName = (e) => (e.items.length === 1 ? itemName(e.items[0]) : `${e.ref} (${tn('count.match', e.items.length)})`);
   const targets = graph.targets || [];
-  for (const t of targets.filter((x) => x.conflict)) {
-    const writers = t.writers.filter((w) => !w.in);
-    const items = [...new Set(t.writers.flatMap((w) => w.items))];
-    const box = t.node ? label(t.node.slice(2)) : null;
+  for (const tg of targets.filter((x) => x.conflict)) {
+    const writers = tg.writers.filter((w) => !w.in);
+    const items = [...new Set(tg.writers.flatMap((w) => w.items))];
+    const box = tg.node ? label(tg.node.slice(2)) : null;
     issues.push({
-      id: 'single-writer:' + t.id, kind: 'single-writer', severity: 'high',
-      title: `${t.writerCount === 2 ? 'Two' : t.writerCount} writers for a single-writer target: ${t.name}`,
-      detail: `floorplan/targets.json says only one part may write to ${t.name}, but lists ${t.writerCount}: ${and(writers.map(entryName))}. Two writers can overwrite each other’s changes or disagree about what is true. Pick the one that owns ${t.name}, and have the others hand their changes to it.`,
-      items: [...items.slice(0, 23), ...(t.node ? [t.node] : [])],
-      notes: { ...Object.fromEntries(items.slice(0, 23).map((x) => [x, `Writes to ${t.name}`])), ...(t.node ? { [t.node]: `${t.name}: one writer allowed, ${t.writerCount} listed` } : {}) },
+      id: 'single-writer:' + tg.id, kind: 'single-writer', severity: 'high',
+      title: t(tg.writerCount === 2 ? 'health.single-writer.title.pair' : 'health.single-writer.title.other', { n: tg.writerCount, name: tg.name }),
+      detail: t('health.single-writer.detail', { name: tg.name, n: tg.writerCount, writers: and(writers.map(entryName)) }),
+      items: [...items.slice(0, 23), ...(tg.node ? [tg.node] : [])],
+      notes: { ...Object.fromEntries(items.slice(0, 23).map((x) => [x, t('health.single-writer.note.writes', { name: tg.name })])), ...(tg.node ? { [tg.node]: t('health.single-writer.note.target', { name: tg.name, n: tg.writerCount }) } : {}) },
       locations: [],
       fix: [
-        `Single-writer check: floorplan/targets.json says only one part may write to the ${t.kind} "${t.name}"${box && box !== t.name ? ` (${box} on the map)` : ''}, but it lists ${t.writerCount} writers:`,
-        ...writers.map((w) => `- ${w.ref}: ${and(w.items.slice(0, 6).map((x) => `${itemName(x)} (${itemPath(x)})`))}${w.items.length > 6 ? ` and ${w.items.length - 6} more` : ''}`),
+        `Single-writer check: floorplan/targets.json says only one part may write to the ${tg.kind} "${tg.name}"${box && box !== tg.name ? ` (${box} on the map)` : ''}, but it lists ${tg.writerCount} writers:`,
+        ...writers.map((w) => `- ${w.ref}: ${andEn(w.items.slice(0, 6).map((x) => `${itemName(x)} (${itemPath(x)})`))}${w.items.length > 6 ? ` and ${w.items.length - 6} more` : ''}`),
         ``,
-        `For each of them, find where and what it writes to ${t.name}. Then propose which one should own all the writing, and how the others would hand their changes to it instead (for example by calling it). Show me the plan first, and don't change any code until I agree. If one of them doesn't really write there, say so, and I'll move it to "readers" in floorplan/targets.json.`,
+        `For each of them, find where and what it writes to ${tg.name}. Then propose which one should own all the writing, and how the others would hand their changes to it instead (for example by calling it). Show me the plan first, and don't change any code until I agree. If one of them doesn't really write there, say so, and I'll move it to "readers" in floorplan/targets.json.`,
       ].join('\n'),
     });
   }
   for (const node of new Set(targets.filter((x) => x.node && x.undeclared?.length).map((x) => x.node))) {
-    const t = targets.find((x) => x.node === node);
+    const tg = targets.find((x) => x.node === node);
     const ext = label(node.slice(2));
     const names = targets.filter((x) => x.node === node).map((x) => x.name);
-    const parts = t.undeclared;
+    const parts = tg.undeclared;
     const calls = parts.flatMap((u) => u.calls.map((c) => ({ ...c, part: u.part })));
-    const how = { write: 'sends changes', read: 'reads', unknown: 'direction unknown' };
+    const how = { write: 'health.undeclared-target-call.dir.write', read: 'health.undeclared-target-call.dir.read', unknown: 'health.undeclared-target-call.dir.unknown' };
     const notes = {};
-    for (const c of calls) { const k = 'f:' + c.file; notes[k] = (notes[k] ? notes[k] + ' · ' : '') + `${c.method ? `${c.method} request` : 'uses its package'} on line ${c.line}, not in targets.json`; }
+    for (const c of calls) { const k = 'f:' + c.file; notes[k] = (notes[k] ? notes[k] + ' · ' : '') + t(c.method ? 'health.undeclared-target-call.note.request' : 'health.undeclared-target-call.note.package', { method: c.method, n: c.line }); }
     issues.push({
       id: 'undeclared-target-call:' + node, kind: 'undeclared-target-call', severity: 'low',
-      title: parts.length === 1 ? `Detected call from ${itemName(parts[0].part)} to ${ext} not declared as reader or writer` : `Detected calls from ${parts.length} parts to ${ext} not declared as readers or writers`,
-      detail: `The scan saw ${and(parts.map((u) => `${itemName(u.part)} (${how[u.dir] || how.unknown})`))} call ${ext}, but floorplan/targets.json doesn’t list ${parts.length === 1 ? 'it' : 'them'} as a writer or reader of ${and(names)}. Only the parts listed there are counted, so a writer missing from the list can break a one-writer rule without anyone noticing.`,
+      title: tn('health.undeclared-target-call.title', parts.length, { part: itemName(parts[0].part), target: ext }),
+      detail: tn('health.undeclared-target-call.detail', parts.length, { parts: and(parts.map((u) => `${itemName(u.part)} (${t(how[u.dir] || how.unknown)})`)), target: ext, names: and(names) }),
       items: [...new Set(calls.map((c) => 'f:' + c.file))].slice(0, 23).concat(node),
       notes, locations: calls.map((c) => ({ file: c.file, line: c.line })),
       fix: [
-        `Targets check: the scan found these calls to ${ext}, from parts that floorplan/targets.json doesn't list as writers or readers of ${and(names.map((n) => `"${n}"`))}:`,
+        `Targets check: the scan found these calls to ${ext}, from parts that floorplan/targets.json doesn't list as writers or readers of ${andEn(names.map((n) => `"${n}"`))}:`,
         ...calls.map((c) => `- ${c.file}:${c.line}${c.method ? ` (${c.method})` : ' (imports its package)'}, in ${itemName(c.part)}`),
         ``,
         `For each one, read the code and tell me whether it writes to ${ext} (creates, changes or deletes something there) or only reads from it. Then add the part's id or the file's path to that target's "writers" or "readers" in floorplan/targets.json, and update the floorplan. If that gives a single-writer target a second writer, tell me instead of changing the code.`,
@@ -1191,10 +1248,10 @@ export function buildHealth({ graph, scan, arch, root, layers }) {
     const names = r.items.map(placeName);
     issues.push({
       id: 'retired-rule:' + r.id, kind: 'retired-rule', severity: 'low',
-      title: `Retired rule still applied: ${r.title}`,
-      detail: `floorplan/rules.json retires “${r.title}”${r.until ? ` (until ${r.until})` : ''}, but it still applies to ${plural(r.items.length, 'place')}: ${and(names)}. Either the code there still follows the old rule, or the entry just wasn't cleaned up. Source: ${r.source}.`,
+      title: t('health.retired-rule.title', { rule: r.title }),
+      detail: t('health.retired-rule.detail', { rule: r.title, until: r.until ? t('health.retired-rule.until', { date: r.until }) : '', places: tn('count.place', r.items.length), names: and(names), source: r.source }),
       items: boxes.slice(0, 24),
-      notes: Object.fromEntries(boxes.slice(0, 24).map((x) => [x, `Still listed under the retired ${r.kind} “${r.title}”`])),
+      notes: Object.fromEntries(boxes.slice(0, 24).map((x) => [x, t(r.kind === 'decision' ? 'health.retired-rule.note.decision' : 'health.retired-rule.note.rule', { rule: r.title })])),
       locations: [],
       fix: [
         `Retired rule check: floorplan/rules.json says the ${r.kind} "${r.title}" (${r.source}) is retired${r.until ? ` since ${r.until}` : ''}, but it still applies to:`,
@@ -1214,7 +1271,7 @@ export function buildHealth({ graph, scan, arch, root, layers }) {
   for (const i of kept) summary[i.severity]++;
   if (!layers) return { summary, issues: kept };
   // a group of its own: counted apart from the checks above, and never pushing one of them off the list
-  const pub = publishIssues({ scan, root, layers, itemFor, nameOf, findings });
+  const pub = publishIssues({ scan, root, layers, itemFor, nameOf, findings, t, tn, en, and });
   return { summary, issues: [...kept, ...pub.issues], publish: pub.summary };
 }
 
@@ -1223,13 +1280,15 @@ export function buildHealth({ graph, scan, arch, root, layers }) {
 // details of this one installation in system files, words from the owner's private list (kept outside the repo) in
 // system and setup files, and system code that imports content. The finders are in lib/layers.mjs. One issue per
 // check and layer; each place is a file and a line, never a value: only its kind, or a private word's first letter.
+// A find's kind is a key of the language table (health.publish.what.<kind>, with its plural forms), so the notes and
+// the explanation are in the map's language while the fix request stays English.
 const PUBLISH_ORDER = ['layer-mixing', 'private-word', 'hardcoded-identifier', 'contact-data', 'machine-path'];
 const PUBLISH_KIND = { identifier: 'hardcoded-identifier', 'private-word': 'private-word', contact: 'contact-data', path: 'machine-path' };
 const isKnownKey = (s) => FORMATS.some((fm) => { fm.re.lastIndex = 0; const hit = fm.re.test(s); fm.re.lastIndex = 0; return hit; });
-function publishIssues({ scan, root, layers, itemFor, nameOf, findings }) {
+function publishIssues({ scan, root, layers, itemFor, nameOf, findings, t, tn, en, and }) {
   const { layerOf } = layers;
   const find = wordFinder(layers.words);
-  const hits = new Map(); // "kind|layer" -> [{ file, line, what }]
+  const hits = new Map(); // "kind|layer" -> [{ file, line, what, vars } | { file, line, mask } | { file, line, to }]
   const add = (kind, layer, x) => { const k = `${kind}|${layer}`; if (!hits.has(k)) hits.set(k, []); hits.get(k).push(x); };
   for (const f of scan.files) {
     if (!['code', 'config', 'docs'].includes(f.category) || f.tooLarge || f.path === layers.wordsFile) continue;
@@ -1239,14 +1298,13 @@ function publishIssues({ scan, root, layers, itemFor, nameOf, findings }) {
     try { src = fs.readFileSync(path.join(root, f.path), 'utf8'); } catch { continue; }
     // lines with a secret are the secret check's: the identifier check doesn't report them again
     const secretLines = new Set(findings(f.path).filter((x) => x.k === 'secret').map((x) => x.line));
-    for (const x of findPublishable(src, f, { layer, find, test: TEST_FILE.test(f.path), skipLines: secretLines, known: isKnownKey })) add(PUBLISH_KIND[x.k], layer, { file: f.path, line: x.line, what: x.what || x.mask });
+    for (const x of findPublishable(src, f, { layer, find, test: TEST_FILE.test(f.path), skipLines: secretLines, known: isKnownKey })) add(PUBLISH_KIND[x.k], layer, { file: f.path, line: x.line, what: x.what, vars: x.vars, mask: x.mask });
   }
   // system code that imports a content file (the setup is there to be imported, content isn't); tests left out
-  for (const e of scan.edges || []) if (layerOf(e.from) === 'system' && layerOf(e.to) === 'content' && !TEST_FILE.test(e.from)) add('layer-mixing', 'system', { file: e.from, line: e.line || 1, what: e.to });
+  for (const e of scan.edges || []) if (layerOf(e.from) === 'system' && layerOf(e.to) === 'content' && !TEST_FILE.test(e.from)) add('layer-mixing', 'system', { file: e.from, line: e.line || 1, to: e.to });
 
   const patterns = (id) => layers.list.find((l) => l.id === id)?.patterns || [];
   const where = (id) => (patterns(id).length ? `layers.json patterns: ${patterns(id).join(', ')}` : 'add patterns for it to layers.json');
-  const and = (xs) => (xs.length < 2 ? xs.join('') : `${xs.slice(0, -1).join(', ')} and ${xs.at(-1)}`);
   const summary = { system: 0, config: 0, words: layers.wordsStatus };
   const out = [];
   for (const [key, all] of hits) {
@@ -1256,35 +1314,35 @@ function publishIssues({ scan, root, layers, itemFor, nameOf, findings }) {
     const n = all.length;
     const files = [...new Set(all.map((x) => x.file))];
     const one = files.length === 1 ? files[0] : null;
-    const filesText = one ? `${nameOf(one)} (${one})` : plural(files.length, 'file');
-    const verb = (s, p) => (one ? s : p);
-    const kinds = [...new Set(all.map((x) => x.what))];
+    const filesText = one ? `${nameOf(one)} (${one})` : tn('count.file', files.length);
+    // what a place holds, in words, with the table given (tx = { t, tn }): "a UUID-style id", "2 32-character ids",
+    // a private word's first letter, or the content file imported
+    const label = (tx, x, c = 1) => (kind === 'layer-mixing' ? tx.t('health.publish.imports', { file: x.to }) : kind === 'private-word' ? x.mask : tx.tn(`health.publish.what.${x.what}`, c, x.vars));
+    // finds that read the same are one kind (a 32-character hex id and a 32-character code both say "a 32-character id")
+    const kindKey = (x) => label({ t, tn }, x);
+    const kinds = [...new Set(all.map(kindKey))];
     // "a UUID-style id and 2 32-character ids", "an email address and a phone number"
-    const many = (what) => {
-      const c = all.filter((x) => x.what === what).length;
-      if (c === 1) return what;
-      const w = what.replace(/^an? /, ''), at = / on /.test(w) ? w.indexOf(' on ') : w.includes(' (') ? w.indexOf(' (') : w.length;
-      return `${c} ${w.slice(0, at)}${/(s|sh|ch|x)$/.test(w.slice(0, at)) ? 'es' : 's'}${w.slice(at)}`;
-    };
-    const counted = and(kinds.map(many));
+    const counted = and(kinds.map((k) => label({ t, tn }, all.find((x) => kindKey(x) === k), all.filter((x) => kindKey(x) === k).length)));
     const items = [], noted = new Map();
     for (const x of all) {
       const it = itemFor(x.file);
       if (!it) continue;
       if (!items.includes(it)) items.push(it);
       if (!noted.has(it)) noted.set(it, []);
-      const at = it === 'f:' + x.file ? `line ${x.line}` : `${x.file.split('/').pop()}, line ${x.line}`;
-      noted.get(it).push(`${at}: ${kind === 'layer-mixing' ? `imports ${x.what}` : x.what}`);
+      noted.get(it).push(t(it === 'f:' + x.file ? 'health.at' : 'health.atIn', { n: x.line, file: x.file.split('/').pop(), what: label({ t, tn }, x) }));
     }
     const shown = items.slice(0, 24);
-    const notes = Object.fromEntries(shown.map((it) => { const l = noted.get(it); return [it, l.slice(0, 4).join(' · ') + (l.length > 4 ? ` · +${l.length - 4} more` : '')]; }));
-    const places = [...all.slice(0, 60).map((x) => `- ${x.file}:${x.line}: ${kind === 'layer-mixing' ? `imports ${x.what}` : x.what}`), ...(n > 60 ? [`- …and ${n - 60} more`] : [])];
+    const notes = Object.fromEntries(shown.map((it) => { const l = noted.get(it); return [it, l.slice(0, 4).join(' · ') + (l.length > 4 ? ` · ${t('common.more', { n: l.length - 4 })}` : '')]; }));
+    const places = [...all.slice(0, 60).map((x) => `- ${x.file}:${x.line}: ${label(en, x)}`), ...(n > 60 ? [`- …and ${n - 60} more`] : [])];
     const setup = layer === 'config';
+    // the explanation: what the files hold (one file or several), then what that means (one find or several)
+    const has = (k, what) => tn(k, files.length, { files: filesText, what });
+    // one entry per check; only the one this group needs is built (a private word has a mask, the others a kind)
     const text = {
-      'hardcoded-identifier': {
+      'hardcoded-identifier': () => ({
         severity: 'medium',
-        title: n === 1 ? 'An identifier of one installation sits in system code' : `${n} identifiers of one installation sit in system code`,
-        detail: `${filesText} ${verb('holds', 'hold')} ${counted}. An identifier of one installation sits in system code: anyone who installs the system would be pointed at this installation's database, calendar, documents or accounts. Move ${n === 1 ? 'it' : 'them'} to configuration, like an environment variable or a setup file in the config layer.`,
+        title: tn('health.publish.hardcoded-identifier.title', n),
+        detail: `${has('health.publish.hardcoded-identifier.has', counted)} ${tn('health.publish.hardcoded-identifier.detail', n)}`,
         fix: [
           `Publishability fix: identifiers of one installation in system code. Do not print, echo or repeat any of these values in your replies, commits or logs.`,
           ``,
@@ -1297,13 +1355,11 @@ function publishIssues({ scan, root, layers, itemFor, nameOf, findings }) {
           `3. Add the setting's name, never its value, to .env.example or an example setup file, so someone installing the system knows what to fill in.`,
           `If an id is the same for everyone (a fixed id of a public service), leave it and tell me why.`,
         ],
-      },
-      'private-word': {
+      }),
+      'private-word': () => ({
         severity: 'medium',
-        title: n === 1 ? `A name from your private word list is in ${setup ? 'a setup file' : 'system files'}` : `Names from your private word list are in ${setup ? 'setup files' : 'system files'} (${n} places)`,
-        detail: `${filesText} ${verb('contains', 'contain')} ${n === 1 ? 'a word' : 'words'} from your private word list (${and([...new Set(all.flatMap((x) => x.what.split(', ')))])}). ${setup
-          ? 'These are setup files, the part someone else replaces with their own, so names of customers, people and places belong in your content instead.'
-          : 'These files are the system you could publish, so the names would go out with it.'} Only each word's first letter is shown; the list itself stays on your computer.`,
+        title: tn(setup ? 'health.publish.private-word.title.config' : 'health.publish.private-word.title.system', n),
+        detail: `${t(n === 1 ? 'health.publish.private-word.has.oneWord' : one ? 'health.publish.private-word.has.words' : 'health.publish.private-word.has.filesWords', { files: filesText, words: and([...new Set(all.flatMap((x) => x.mask.split(', ')))]) })} ${t(setup ? 'health.publish.private-word.detail.config' : 'health.publish.private-word.detail.system')}`,
         fix: [
           `Publishability fix: words from my private word list in ${setup ? 'setup files (the config layer)' : 'system files'}. The list itself stays outside the repo. Never write any of these words in your replies, commits, logs or new files; I know which ones they are.`,
           ``,
@@ -1315,11 +1371,11 @@ function publishIssues({ scan, root, layers, itemFor, nameOf, findings }) {
             : `For each line, replace the name with a neutral or made-up one (in comments, docs, tests and examples), or, where the code needs the real value, move it into the content layer (${where('content')}) and read it from there.`,
           `Don't change what the code does. Then tell me which files you changed, without naming the words.`,
         ],
-      },
-      'contact-data': {
+      }),
+      'contact-data': () => ({
         severity: 'low',
-        title: n === 1 ? `Contact details are written into ${nameOf(all[0].file)}` : `Contact details are written into system code (${n} places)`,
-        detail: `${filesText} ${verb('contains', 'contain')} ${counted}, most likely this installation's own or a person's. ${n === 1 ? 'It' : 'They'} would be published with the system. Addresses at example.com and noreply addresses don't count.`,
+        title: tn('health.publish.contact-data.title', n, { name: nameOf(all[0].file) }),
+        detail: `${has('health.publish.contact-data.has', counted)} ${tn('health.publish.contact-data.detail', n)}`,
         fix: [
           `Publishability fix: contact details in system code. Do not repeat the addresses or numbers in your replies, commits or logs.`,
           ``,
@@ -1328,11 +1384,11 @@ function publishIssues({ scan, root, layers, itemFor, nameOf, findings }) {
           ``,
           `For each one, tell me whose it is: this installation's own, a customer's or another person's, or a public address that's meant to ship with the system. Move the ones that belong to this installation or to people into configuration (an environment variable, or a setup file in the config layer: ${where('config')}) or into content, and keep a placeholder like name@example.com where the code needs an example. Show me the plan before changing code.`,
         ],
-      },
-      'machine-path': {
+      }),
+      'machine-path': () => ({
         severity: 'low',
-        title: n === 1 ? 'System code points at a folder on one computer' : `System code points at folders on one computer (${n} places)`,
-        detail: `${filesText} ${verb('uses', 'use')} ${counted}. A folder like that exists only on this computer, so on anyone else's the system can't find it. Read it from configuration instead, or build it relative to the project.`,
+        title: tn('health.publish.machine-path.title', n),
+        detail: `${has('health.publish.machine-path.has', counted)} ${t('health.publish.machine-path.detail')}`,
         fix: [
           `Publishability fix: absolute paths of one computer in system code.`,
           ``,
@@ -1341,19 +1397,19 @@ function publishIssues({ scan, root, layers, itemFor, nameOf, findings }) {
           ``,
           `For each one, read the folder from configuration instead (an environment variable, or a setting in the config layer: ${where('config')}), or build it relative to the project or the user's home folder (path.join(os.homedir(), …) in Node, Path.home() in Python). Keep today's folder as this installation's setting, so nothing changes here. Then run the app or its tests to check that it still finds its files.`,
         ],
-      },
-      'layer-mixing': {
+      }),
+      'layer-mixing': () => ({
         severity: 'medium',
-        title: n === 1 ? 'System code imports a content file' : `System code imports content files (${n} places)`,
-        detail: `${filesText} ${verb('imports', 'import')} ${kinds.length === 1 ? kinds[0] : plural(kinds.length, 'file')} from the content layer. System depends on content: the system will not run without this owner's content.`,
+        title: tn('health.publish.layer-mixing.title', n),
+        detail: `${has('health.publish.layer-mixing.has', kinds.length === 1 ? all[0].to : tn('count.file', kinds.length))} ${t('health.publish.layer-mixing.detail')}`,
         fix: [
           `Publishability fix: system code imports content. floorplan/layers.json puts these files in the system layer, and what they import in the content layer, the owner's own data:`,
           ...places,
           ``,
           `The system depends on content, so it will not run without this owner's content. For each import, tell me what the code needs from the file. Then propose one of: load the content at run time from a place the setup names (a path in configuration), or move what the code really needs (a schema, defaults, an example with made-up data) into the system. Show me the plan first, and don't change any code until I agree.`,
         ],
-      },
-    }[kind];
+      }),
+    }[kind]();
     out.push({
       id: `publish:${kind}:${layer}`, kind, severity: text.severity, group: 'publish', layer,
       title: text.title, detail: text.detail, items: shown, notes,
@@ -1373,7 +1429,10 @@ const testModeEnd = (cond) => {
   return ms ? new Date(+ms[1]) : null;
 };
 
-/** Firestore / Storage rules that let anyone in: `allow …: if true`, `allow …;` (no condition) and test mode. */
+/**
+ * Firestore / Storage rules that let anyone in: `allow …: if true`, `allow …;` (no condition) and test mode. Each as
+ * data (`ops`, the condition or null, `where`); buildHealth puts it into words in the map's language.
+ */
 function firebaseRules(src, now) {
   const s = src.replace(/\/\/[^\n]*/g, (m) => ' '.repeat(m.length));
   const at = lineIndex(s);
@@ -1387,7 +1446,7 @@ function firebaseRules(src, now) {
     const where = matches.filter((x) => x.i < m.index).pop()?.path || '/';
     const writeOps = ops.filter((o) => /^(write|create|update|delete)$/.test(o));
     out.push({
-      line: at(m.index), text: `allow ${ops.join(', ')}${m[2] ? `: if ${cond}` : ' (no condition)'} at ${where}`,
+      line: at(m.index), ops: ops.join(', '), cond: m[2] ? cond : null,
       read: ops.some((o) => /^(read|get|list)$/.test(o)), write: writeOps.length > 0, createOnly: writeOps.length > 0 && writeOps.every((o) => o === 'create'),
       open: !end ? 'always' : end > now ? 'until' : 'expired', until: end, where,
       wide: /=\*\*\}/.test(where) || /\/documents$/.test(where) || where === '/',
@@ -1396,7 +1455,7 @@ function firebaseRules(src, now) {
   return out;
 }
 
-/** Realtime Database rules (database.rules.json) with ".read" / ".write" set to true or test mode. */
+/** Realtime Database rules (database.rules.json) with ".read" / ".write" set to true or test mode; `where` is null for the whole database. */
 function firebaseRtdbRules(src, now) {
   const s = src.replace(/(^|[^:"])\/\/[^\n]*/g, (m, pre) => pre + ' '.repeat(m.length - pre.length));
   const at = lineIndex(s);
@@ -1409,9 +1468,9 @@ function firebaseRtdbRules(src, now) {
     let depth = 0;
     for (let i = 0; i < m.index; i++) { if (s[i] === '{') depth++; else if (s[i] === '}') depth--; }
     const keys = [...s.slice(0, m.index).matchAll(/"([^".][^"]*)"\s*:\s*\{/g)].map((k) => k[1]);
-    const where = depth <= 2 ? 'the whole database' : '/' + keys.slice(-(depth - 2)).join('/');
+    const where = depth <= 2 ? null : '/' + keys.slice(-(depth - 2)).join('/');
     out.push({
-      line: at(m.index), text: `"${m[1] === 'read' ? '.read' : '.write'}": ${m[2]} for ${where}`,
+      line: at(m.index), key: m[1] === 'read' ? '.read' : '.write', value: m[2],
       read: m[1] === 'read', write: m[1] === 'write', createOnly: false,
       open: !end ? 'always' : end > now ? 'until' : 'expired', until: end, where, wide: depth <= 2, root: depth <= 2,
     });

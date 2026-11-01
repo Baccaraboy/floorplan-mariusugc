@@ -5,11 +5,14 @@
 //                          build.mjs and the viewer work unchanged. Returns { scan, errors, warnings }.
 // buildPlanHealth(ctx)   — called by build.mjs instead of buildHealth for a blueprint: a design review of
 //                          the plan (who may call each endpoint, loose ends, open questions) in the same
-//                          { summary, issues } shape, so the Health panel shows it.
+//                          { summary, issues } shape, so the Health panel shows it. Titles, explanations and
+//                          notes come from the language table (health.plan-*.* keys) in the map's language
+//                          ({ words, lang }); the fix and change requests are for the agent and stay English.
 
 import path from 'node:path';
 import { classify, toPosix } from './common.mjs';
 import { matchCalls } from './routes.mjs';
+import { strings as langStrings, translator } from './lang.mjs';
 
 // who may use an endpoint. "team" is the people who run the service (its own admin pages), not the app's users.
 export const ACCESS = ['public', 'signed-in', 'team', 'webhook', 'internal'];
@@ -130,9 +133,10 @@ export function planToScan(plan, root) {
 }
 
 /** The design review shown in the Health panel for a blueprint. */
-export function buildPlanHealth({ graph, scan }) {
+export function buildPlanHealth({ graph, scan, words, lang }) {
   const bp = scan.blueprint || {};
   const issues = [];
+  const { t, tn } = translator(words || langStrings('en'), lang || 'en');
   const routes = graph.routes || [];
   const ridOf = new Map(routes.map((r, i) => [routeKey(r.m, r.p), 'r:' + i]));
   const fileIds = new Set(graph.files.map((f) => 'f:' + f.p));
@@ -158,10 +162,10 @@ export function buildPlanHealth({ graph, scan }) {
   if (openWrites.length) issues.push({
     id: 'plan-open-writes', kind: 'unprotected-endpoint', severity: 'medium',
     change: `Review who may use ${names(openWrites.map(({ r }) => ep(r)))}: anyone can change data through ${openWrites.length === 1 ? 'it' : 'them'} now. `,
-    title: openWrites.length === 1 ? 'Anyone could change data through one planned endpoint' : `Anyone could change data through ${openWrites.length} planned endpoints`,
-    detail: `The plan lets ${openWrites.length === 1 ? 'this endpoint' : 'these endpoints'} create, change or delete data with no sign-in. That's right for things like signing up or a guest checkout, but worth a second look before building: ${openWrites.length === 1 ? 'it is' : 'they are'} the easiest thing for a stranger to misuse.`,
+    title: tn('health.plan-open-writes.title', openWrites.length),
+    detail: tn('health.plan-open-writes.detail', openWrites.length),
     items: openWrites.slice(0, 24).map(({ i }) => 'r:' + i),
-    notes: Object.fromEntries(openWrites.slice(0, 24).map(({ i }) => ['r:' + i, 'Planned as open to anyone, and changes data'])),
+    notes: Object.fromEntries(openWrites.slice(0, 24).map(({ i }) => ['r:' + i, t('health.plan-open-writes.note')])),
     locations: [],
     fix: [`Design review of floorplan/plan.json: these planned endpoints change data and are marked "access": "public":`, ...openWrites.map(({ r }) => line(r)), ``, `For each one, tell me in plain words whether a stranger should really be able to use it. Where they shouldn't, change its access to "signed-in" (with "who" if only some users may) in plan.json. Where it must stay public (sign-in, sign-up, guest checkout), set "publicBecause" to why, including what limits abuse (rate limits, a CAPTCHA, email confirmation). Ask me if you're unsure.`, rebuild].join('\n'),
   });
@@ -169,10 +173,10 @@ export function buildPlanHealth({ graph, scan }) {
   if (unknown.length) issues.push({
     id: 'plan-no-access', kind: 'unprotected-endpoint', severity: 'medium',
     change: `Decide who may use ${names(unknown.map(({ r }) => ep(r)))}, going by the PRD. `,
-    title: unknown.length === 1 ? 'The plan doesn’t say who may use one endpoint' : `The plan doesn’t say who may use ${unknown.length} endpoints`,
-    detail: `Deciding who can use each part of the system now (anyone, signed-in customers, only managers, your own team, another service) is much easier than adding sign-in checks after it's built.`,
+    title: tn('health.plan-no-access.title', unknown.length),
+    detail: t('health.plan-no-access.detail'),
     items: unknown.slice(0, 24).map(({ i }) => 'r:' + i),
-    notes: Object.fromEntries(unknown.slice(0, 24).map(({ i }) => ['r:' + i, 'Who may use this isn’t decided'])),
+    notes: Object.fromEntries(unknown.slice(0, 24).map(({ i }) => ['r:' + i, t('health.plan-no-access.note')])),
     locations: [],
     fix: [`Design review of floorplan/plan.json: these planned endpoints have no "access" set:`, ...unknown.map(({ r }) => line(r)), ``, `For each, choose who may use it: "public" (anyone), "signed-in" (plus "who" when only some users may, such as "managers of that location"), "team" (only the people who run the service), "webhook" (another company's service, which must prove it's them) or "internal" (only our own services). Base it on the PRD; ask me where the PRD doesn't say.`, rebuild].join('\n'),
   });
@@ -184,8 +188,8 @@ export function buildPlanHealth({ graph, scan }) {
       id: 'plan-question:' + k, kind: 'question', severity: 'medium',
       change: `Open question: "${q.question}" My answer: `,
       title: q.question,
-      detail: 'The PRD doesn’t answer this, and the answer changes what gets built. Decide it before building the parts it touches.',
-      items, notes: Object.fromEntries(items.map((id) => [id, 'Depends on an open question'])),
+      detail: t('health.plan-question.detail'),
+      items, notes: Object.fromEntries(items.map((id) => [id, t('health.plan-question.note')])),
       locations: [],
       fix: [`Open question in the blueprint (floorplan/plan.json): ${q.question}`, ``, `Explain the options to me in plain words, with what each would mean for the parts it touches${q.about.length ? ` (${q.about.join(', ')})` : ''}, and recommend one. After I decide, update plan.json and architecture.json to match and remove the question from plan.json's questions.`, rebuild].join('\n'),
     });
@@ -197,10 +201,10 @@ export function buildPlanHealth({ graph, scan }) {
   if (unusedRoutes.length) issues.push({
     id: 'plan-unused-endpoints', kind: 'unused-file', severity: 'low',
     change: `Nothing calls ${names(unusedRoutes.map(({ r }) => ep(r)))}. Add the screen or service that should use ${unusedRoutes.length === 1 ? 'it' : 'them'}, or remove ${unusedRoutes.length === 1 ? 'it' : 'them'} if not needed. `,
-    title: unusedRoutes.length === 1 ? 'Nothing in the plan uses one endpoint' : `Nothing in the plan uses ${unusedRoutes.length} endpoints`,
-    detail: `No planned page or service calls ${unusedRoutes.length === 1 ? 'it' : 'them'}. Either a screen that needs ${unusedRoutes.length === 1 ? 'it is' : 'them is'} missing from the plan, or ${unusedRoutes.length === 1 ? 'it isn’t' : 'they aren’t'} needed.`,
+    title: tn('health.plan-unused-endpoints.title', unusedRoutes.length),
+    detail: tn('health.plan-unused-endpoints.detail', unusedRoutes.length),
     items: unusedRoutes.slice(0, 24).map(({ i }) => 'r:' + i),
-    notes: Object.fromEntries(unusedRoutes.slice(0, 24).map(({ i }) => ['r:' + i, 'No planned caller'])),
+    notes: Object.fromEntries(unusedRoutes.slice(0, 24).map(({ i }) => ['r:' + i, t('health.plan-unused-endpoints.note')])),
     locations: [],
     fix: [`Design review of floorplan/plan.json: nothing in the plan calls these endpoints:`, ...unusedRoutes.map(({ r }) => line(r)), ``, `For each, find which planned screen or service should call it and add it to that file's "calls", or tell me it isn't needed and remove it.`, rebuild].join('\n'),
   });
@@ -212,10 +216,10 @@ export function buildPlanHealth({ graph, scan }) {
   if (loose.length) issues.push({
     id: 'plan-loose-files', kind: 'unused-file', severity: 'low',
     change: `${names(loose.map((f) => f.p))} ${loose.length === 1 ? 'isn’t' : 'aren’t'} connected to anything. Connect ${loose.length === 1 ? 'it' : 'them'} to what should use ${loose.length === 1 ? 'it' : 'them'}, or remove ${loose.length === 1 ? 'it' : 'them'}. `,
-    title: loose.length === 1 ? 'One planned file isn’t connected to anything' : `${loose.length} planned files aren’t connected to anything`,
-    detail: `Nothing in the plan uses ${loose.length === 1 ? 'it' : 'them'}, and ${loose.length === 1 ? 'it doesn’t' : 'they don’t'} use anything. That usually means a connection is missing from the plan.`,
+    title: tn('health.plan-loose-files.title', loose.length),
+    detail: tn('health.plan-loose-files.detail', loose.length),
     items: loose.slice(0, 24).map((f) => 'f:' + f.p),
-    notes: Object.fromEntries(loose.slice(0, 24).map((f) => ['f:' + f.p, 'Not connected to anything in the plan'])),
+    notes: Object.fromEntries(loose.slice(0, 24).map((f) => ['f:' + f.p, t('health.plan-loose-files.note')])),
     locations: [],
     fix: [`Design review of floorplan/plan.json: these planned files aren't connected to anything:`, ...loose.map((f) => `- ${f.p}`), ``, `Add the missing "uses", "calls", "services" or "data" entries, or remove files that aren't needed.`, rebuild].join('\n'),
   });
