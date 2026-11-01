@@ -16,7 +16,7 @@ Contents: [Top level](#top-level) · [nodes](#nodes) · [Assignment rules](#how-
 | `flows` | array | no | guided walkthroughs through the board |
 | `tour` | array | no | the "Start here" tour shown on first open: 3–8 stops `{ "node": "<node id or file path>", "title": "…", "note": "…" }`, in plain language, in the order a newcomer should see them. The first flow is appended automatically |
 | `audience` | `"everyone"` \| `"developers"` | no | who names and descriptions are written for. Default `"everyone"`: plain language a non-technical owner understands (what it does for the business, in everyday words). `"developers"`: technical style for engineers |
-| `lang` | `"en"` \| `"de"` | no | the language of the map's own words (buttons, panels, the glossary), one of the tables in `assets/lang/`. Default `"en"`. Write names, descriptions, flows, the tour and recent work in it too. `build.mjs --lang <code>` overrides it for one build |
+| `lang` | `"en"` \| `"de"` | no | the language of the map's own words (buttons, panels, the glossary, the Health findings' titles and explanations), one of the tables in `assets/lang/`. Default `"en"`. Write names, descriptions, flows, the tour and recent work in it too. `build.mjs --lang <code>` overrides it for one build |
 | `git` | `"none"` \| `"inputs"` | no | whether the map's files may go in git. Default `"none"`: `floorplan/` ignores itself completely. `"inputs"`: it ignores only what a build writes again, so the inputs and `MAP.md` can be committed ([below](#git)) |
 | `include` | string[] | no | file categories to map. Default `["code"]`. Others: `config`, `docs` |
 | `ignore` | string[] | no | globs for files to leave off the board entirely (generated code, vendored libs, fixtures) |
@@ -366,6 +366,8 @@ With layers.json, Health also lists what would keep the system from being publis
 | **System depends on content**: a system file imports a content file. Importing the setup is what it's for, so that's no finding | system | medium |
 
 Tests and fixtures are left out of all but the private words: their ids and addresses are usually made up, and a real name in a test is exactly what should be found. Content is never checked.
+
+- **In `graph.json`:** every Health finding, this group included, is `{ id, kind, severity, title, detail, items, notes, locations, fix }`. The `id` is fixed, `<check>` or `<check>:<instance>` (`large-files`, `secret:src/config.py`, `publish:private-word:system`), so a program finds a finding again whatever the language; `title`, `detail` and the `notes` on the cards are in the map's language (`lang`), from the `health.<check>.*` keys of the language table (`docs/i18n.md` in the repository says how they are translated); `fix` is the request to paste into the agent and stays English. A finding never carries a value from the code, only a file, a line and a kind.
 
 ### The private word list
 
