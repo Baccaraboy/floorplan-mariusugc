@@ -307,6 +307,8 @@ It only writes its own `floorplan/` folder (and, in Claude Code if you say yes, 
 <summary><b>The names it picked aren't how we talk about it. Can I change them?</b></summary>
 
 Yes. Just ask ("rename 'Main server' to 'Shop API' on the floorplan"), or edit `floorplan/architecture.json` and `floorplan/descriptions/` yourself. Your edits are kept on every update.
+
+To fix names for good, ask to "freeze the names", or put them in `floorplan/names.json` yourself: they win over everything else, in one language or one per language, and no update or new description changes them. When a file with a fixed name moves or goes away, the update tells you instead of guessing ([format](skills/floorplan/references/schema.md#fixed-names)).
 </details>
 
 <details>

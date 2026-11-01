@@ -53,11 +53,14 @@ const top = (m, n = 5) => m ? [...m.entries()].sort((x, y) => y[1] - x[1]).slice
 const routesByFile = new Map();
 for (const r of g.routes || []) { if (!routesByFile.has(r.f)) routesByFile.set(r.f, []); routesByFile.get(r.f).push(r); }
 
-const needs = (f) => args.all || f.auto || f.review;
+// Entries the owner fixed in floorplan/names.json (build.mjs marks them "fixed"): with name and description fixed
+// there's nothing to write, even with --all; with only the name fixed, the AI writes the description and keeps the name.
+const needs = (x) => x.fixed !== 'all' && (args.all || x.auto || x.review);
+const fixedName = (x) => (x.fixed === 'name' ? `  FIXED NAME "${x.name}"` : '');
 const byNode = new Map();
 for (const f of g.files) {
   const rs = routesByFile.get(f.p) || [];
-  if (!needs(f) && !rs.some((r) => args.all || r.auto || r.review)) continue;
+  if (!needs(f) && !rs.some(needs)) continue;
   if (!byNode.has(f.n)) byNode.set(f.n, []);
   byNode.get(f.n).push(f);
 }
@@ -88,10 +91,13 @@ for (const [nid, list] of byNode) {
     if (n?.summary) out.push(`Module: ${n.summary}`);
     out.push(`Write to: floorplan/descriptions/${key}.json (a skeleton is already there; fill in every "description", improve every "name").`);
     out.push('Entries marked REVIEW already have a description but their code changed: update name/description if the change matters, then delete the "review" field. Entries not listed here are fine; leave them alone.');
+    const routesHere = chunk.flatMap((f) => (routesByFile.get(f.p) || []).filter(needs));
+    if ([...chunk.filter(needs), ...routesHere].some((x) => x.fixed === 'name')) out.push('Entries marked FIXED NAME were named by the owner in floorplan/names.json: keep that name exactly and write only the description.');
     out.push('');
     let routeCount = 0;
     for (const f of chunk) {
-      out.push(`## ${f.p}  (${fmtNum(f.loc)} loc, ${f.l})${f.review ? '  REVIEW' : !needs(f) ? '  (already described; only its routes need work)' : ''}`);
+      out.push(`## ${f.p}  (${fmtNum(f.loc)} loc, ${f.l})${f.review ? '  REVIEW' : !needs(f) ? f.fixed === 'all' ? '  (name and description fixed in names.json; only its routes need work)' : '  (already described; only its routes need work)' : ''}`);
+      if (needs(f) && f.fixed === 'name') out.push(fixedName(f).trim());
       if (f.review) out.push(`current: ${f.name} — ${f.d}
 changed: ${f.review}`);
       if (f.doc) out.push(`doc: ${f.doc}`);
@@ -103,9 +109,10 @@ changed: ${f.review}`);
       if (u) out.push(`uses: ${u}`);
       if (b) out.push(`used by: ${b}`);
       for (const r of routesByFile.get(f.p) || []) {
+        if (r.fixed === 'all') continue;
         routeCount++;
         const mark = r.review ? `  REVIEW (${r.review}); current: ${r.name} — ${r.d}` : r.auto ? '  NEW' : '  (described)';
-        out.push(`route: ${routeKey({ method: r.m, path: r.p })}  handler ${r.h || '?'}${r.doc ? ` (${r.doc})` : ''}${mark}`);
+        out.push(`route: ${routeKey({ method: r.m, path: r.p })}  handler ${r.h || '?'}${r.doc ? ` (${r.doc})` : ''}${mark}${fixedName(r)}`);
       }
       out.push('');
     }
@@ -116,10 +123,10 @@ changed: ${f.review}`);
     try { existing = JSON.parse(fs.readFileSync(descFile, 'utf8')); } catch {}
     const skel = { files: { ...(existing.files || {}) }, routes: { ...(existing.routes || {}) } };
     for (const f of chunk) {
-      if (!skel.files[f.p]) skel.files[f.p] = { name: f.auto ? fallbackFileName(f.p) : f.name, description: f.auto ? '' : f.d };
+      if (!skel.files[f.p] && f.fixed !== 'all') skel.files[f.p] = { name: f.auto && !f.fixed ? fallbackFileName(f.p) : f.name, description: f.auto ? '' : f.d };
       for (const r of routesByFile.get(f.p) || []) {
         const k = routeKey({ method: r.m, path: r.p });
-        if (!skel.routes[k]) skel.routes[k] = { name: r.auto ? fallbackRouteName({ handler: r.h, method: r.m, path: r.p }) : r.name, description: r.auto ? '' : r.d };
+        if (!skel.routes[k] && r.fixed !== 'all') skel.routes[k] = { name: r.auto && !r.fixed ? fallbackRouteName({ handler: r.h, method: r.m, path: r.p }) : r.name, description: r.auto ? '' : r.d };
       }
     }
     if (!Object.keys(skel.routes).length) delete skel.routes;

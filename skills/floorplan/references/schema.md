@@ -2,7 +2,7 @@
 
 `floorplan/architecture.json` describes the structure: subsystems, modules, external services, flows. Names and descriptions for individual files and routes go in `floorplan/descriptions/*.json` instead (see [writing-descriptions.md](writing-descriptions.md)). They're kept separate so parallel agents can write them without conflicts. `build.mjs` checks both against the scan and reports problems by field.
 
-Contents: [Top level](#top-level) · [nodes](#nodes) · [Assignment rules](#how-files-get-assigned) · [edges](#edges) · [annotations](#annotations) · [flows](#flows) · [Recent work](#recent-work) · [Full example](#full-example)
+Contents: [Top level](#top-level) · [nodes](#nodes) · [Assignment rules](#how-files-get-assigned) · [edges](#edges) · [annotations](#annotations) · [flows](#flows) · [Recent work](#recent-work) · [Fixed names](#fixed-names) · [Full example](#full-example)
 
 ## Top level
 
@@ -130,6 +130,38 @@ Good candidates:
 | `items[].note` | 1–2 plain sentences: what changed on this card, and how it serves the request |
 
 `{ "tasks": [] }` clears all highlights.
+
+## fixed names
+
+`floorplan/names.json` is optional. It holds the owner's own names for parts, files and endpoints, the words they use for them, so that no rebuild, refresh or new description changes them. The build applies it last: an entry wins over the node's `label` and `summary` in architecture.json, over `descriptions/*.json` and over plan.json.
+
+```json
+{
+  "parts": {
+    "api": { "name": "The Back Office", "description": "Where every order is kept and changed." },
+    "web": { "name": { "en": "The Shop Window", "de": "Das Schaufenster" } }
+  },
+  "files": {
+    "shop-api/app/services/refunds.py": { "name": "The Refund Desk" }
+  },
+  "routes": {
+    "POST /api/orders/<int:order_id>/refund": { "name": "Refund an order" }
+  }
+}
+```
+
+| field | meaning |
+|---|---|
+| `parts` | keyed by node id from architecture.json |
+| `files` | keyed by file path, as on the map |
+| `routes` | keyed by `"METHOD /path"`, exactly as the worksheets print it |
+| `name` | required. The name shown on the map |
+| `description` | optional. Without it, the description still comes from architecture.json or `descriptions/` |
+
+- **Languages:** a `name` or `description` is a string, the same in every language, or one per language: `{ "en": "…", "de": "…" }`. The map uses its own language (`lang`), else English, else the first one given.
+- **Checked like everything else:** an id, path or route that isn't on the map is an error with a "did you mean …", so a fixed name never disappears quietly.
+- **describe.mjs** writes no worksheet entry for something whose name and description are both fixed (not even with `--all`). With only the name fixed, the worksheet marks it `FIXED NAME`: keep the name, write the description.
+- **refresh.mjs** never changes names.json. When a fixed file is moved or deleted, or a fixed endpoint changes address, NEXT says so, and the entry is moved or removed by hand.
 
 ## Full example
 

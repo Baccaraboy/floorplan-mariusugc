@@ -10,6 +10,7 @@ Floorplan writes to exactly two places in your project: the `floorplan/` folder,
 | `graph.json` | Everything the map shows, as data | No. Rebuilt every time |
 | `architecture.json` | The parts of your app, outside services, extra connections, flows and the tour | **Yes** |
 | `descriptions/*.json` | The name and description of every file and endpoint, one file per part | **Yes** |
+| `names.json` | Optional: names you've fixed for parts, files and endpoints, which win over everything else and no update changes. Only there if you or the AI made it | **Yes** |
 | `plan.json` | Blueprints only: the planned files, endpoints and screens, who may use each endpoint, the stack, assumptions and open questions. Names and descriptions live here instead of `descriptions/` | **Yes** |
 | `recent-work.json` | What was just worked on, and why. Replaced on every update | Rarely. The AI writes it |
 | `custom-flows.json` | Flows requested from the map | Only to delete one |
@@ -30,6 +31,8 @@ Your edits to `architecture.json` and `descriptions/` are kept on every update. 
 - add or change flows and the tour.
 
 Or just ask Claude or Codex ("rename 'Main server' to 'Shop API' on the floorplan").
+
+Names you want to keep exactly, whatever the AI writes later, go in `names.json` ("freeze the names on the floorplan"). Each one is a string or one per language, like `{ "en": "Order desk", "de": "Bestellannahme" }`. An update never edits this file: if a file named there moves or is deleted, it tells you, and the entry is moved by hand.
 
 A blueprint is edited the same way, through `plan.json` and `architecture.json`, or from the map with the Ask bar's **Change** switch. The plan's format is in [`blueprint.md`](../skills/floorplan/references/blueprint.md).
 

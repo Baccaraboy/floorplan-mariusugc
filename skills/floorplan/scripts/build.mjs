@@ -329,6 +329,62 @@ if (fs.existsSync(descDir)) {
 if (staleFiles) warn(`${staleFiles} described file(s) no longer exist or aren't included (e.g. ${staleEx.join(', ')}). Remove them from descriptions/.`);
 if (staleRoutes) warn(`${staleRoutes} described route(s) no longer match a route in the scan; remove or re-key them.`);
 
+// ---------- fixed names (floorplan/names.json) ----------
+// The owner's own names, and optionally descriptions, for parts, files and endpoints. Applied last, so an entry
+// wins over architecture.json, descriptions/*.json and plan.json, and no rebuild or refresh changes it. Each text is
+// a string, or one per language ({ "en": "…", "de": "…" }): the map's language, else English, else the first given.
+const namesFile = path.join(outDir, 'names.json');
+const fixedParts = new Map(), fixedFiles = new Map(), fixedRoutes = new Map();
+const LANG_CODE = /^[a-z]{2,3}(-[A-Za-z0-9]{2,8})?$/;
+const fixedText = (v, where, required) => {
+  if (v === undefined || v === null) { if (required) err(`${where} is required`); return null; }
+  if (typeof v === 'string') { if (!v.trim()) err(`${where} is empty`); return v.trim() || null; }
+  if (typeof v !== 'object' || Array.isArray(v) || !Object.keys(v).length) { err(`${where} must be a string, or one per language like { "en": "…", "de": "…" }`); return null; }
+  for (const [code, s] of Object.entries(v)) {
+    if (!LANG_CODE.test(code)) err(`${where}: "${code}" is not a language code (like "en" or "de")`);
+    else if (typeof s !== 'string' || !s.trim()) err(`${where}.${code} must be a non-empty string`);
+  }
+  const ok = (c) => LANG_CODE.test(c) && typeof v[c] === 'string' && v[c].trim();
+  const pick = ok(lang) ? lang : ok('en') ? 'en' : Object.keys(v).find(ok);
+  return pick ? v[pick].trim() : null;
+};
+let namesTable = null;
+if (fs.existsSync(namesFile)) {
+  try { namesTable = JSON.parse(fs.readFileSync(namesFile, 'utf8')); } catch (e) { err(`names.json is not valid JSON: ${e.message}`); }
+  if (namesTable !== null && (typeof namesTable !== 'object' || Array.isArray(namesTable))) { err('names.json must be an object with "parts", "files" and/or "routes"'); namesTable = null; }
+}
+if (namesTable) {
+  const SECTIONS = ['parts', 'files', 'routes'];
+  for (const k of Object.keys(namesTable)) if (!SECTIONS.includes(k) && k !== '$schema') err(`names.json: unknown section "${k}"${didYouMean(k, SECTIONS)}`);
+  // what the last refresh saw move or go away (.cache/changes.json) beats a guess by spelling
+  let changes = null;
+  try { changes = JSON.parse(fs.readFileSync(path.join(outDir, '.cache', 'changes.json'), 'utf8')); } catch {}
+  const movedTo = new Map([...(changes?.files?.moved || []), ...(changes?.routes?.moved || [])].map((m) => [m.from, m.to]));
+  const gone = new Set([...(changes?.files?.deleted || []), ...(changes?.routes?.removed || [])]);
+  const suggest = (k, onMap, options) => onMap(movedTo.get(k)) ? ` — did you mean "${movedTo.get(k)}"? (it moved there)` : gone.has(k) ? ' (it was deleted)' : didYouMean(k, options());
+  const unknownFile = (p) => fileByPath.has(p) ? ` is a file that is not on the map (category ${fileByPath.get(p).category})` : ` is not a file on the map${suggest(p, (x) => includedSet.has(x), () => [...includedSet])}`;
+  const sections = [
+    ['parts', fixedParts, (k) => byId.has(k), (k) => ` is not a part in architecture.json${didYouMean(k, ids)}`, 'part ids'],
+    ['files', fixedFiles, (k) => includedSet.has(k), unknownFile, 'file paths'],
+    ['routes', fixedRoutes, (k) => routeKeys.has(k), (k) => ` is not an endpoint on the map${suggest(k, (x) => routeKeys.has(x), () => [...routeKeys])}`, '"METHOD /path"'],
+  ];
+  for (const [key, into, known, unknown, keyedBy] of sections) {
+    const sec = namesTable[key];
+    if (sec === undefined) continue;
+    if (!sec || typeof sec !== 'object' || Array.isArray(sec)) { err(`names.json: "${key}" must be an object keyed by ${keyedBy}`); continue; }
+    for (const [k, v] of Object.entries(sec)) {
+      const where = `names.json ${key}["${k}"]`;
+      if (!known(k)) { err(where + unknown(k)); continue; }
+      if (!v || typeof v !== 'object' || Array.isArray(v)) { err(`${where} must be { "name": "…", "description": "…" }`); continue; }
+      const name = fixedText(v.name, `${where}.name`, true), d = fixedText(v.description, `${where}.description`, false);
+      if (name) into.set(k, { name, d, fixed: d ? 'all' : 'name' });
+    }
+  }
+}
+// a fixed description also settles a "review" flag: the AI doesn't rewrite what the owner wrote
+for (const [p, fx] of fixedFiles) { const cur = fileDesc.get(p); fileDesc.set(p, { name: fx.name, d: fx.d || cur?.d || null, review: fx.d ? null : cur?.review || null, fixed: fx.fixed }); }
+for (const [k, fx] of fixedRoutes) { const cur = routeDesc.get(k); routeDesc.set(k, { name: fx.name, d: fx.d || cur?.d || null, review: fx.d ? null : cur?.review || null, fixed: fx.fixed }); }
+
 // ---------- stats ----------
 const unassigned = included.filter((f) => owner.get(f.path) === 'unassigned');
 const stats = new Map([...ids, 'unassigned'].map((id) => [id, { files: 0, loc: 0, langs: {}, repos: new Set() }]));
@@ -346,7 +402,7 @@ for (const f of included) {
 const pct = included.length ? (unassigned.length / included.length) * 100 : 0;
 const report = [];
 if (errors.length) {
-  report.push(`✗ ${errors.length} error(s) in ${path.relative(root, archFile)}${scan.blueprint ? ' or plan.json' : ''}:`);
+  report.push(`✗ ${errors.length} error(s) in ${path.relative(root, archFile)}${scan.blueprint ? ' or plan.json' : ''}${errors.some((e) => e.startsWith('names.json')) ? ' or names.json' : ''}:`);
   for (const e of errors) report.push(`  - ${e}`);
 }
 if (warnings.length) {
@@ -370,11 +426,13 @@ for (const l of links.values()) byKind[l.k] = (byKind[l.k] || 0) + 1;
 report.push(`LINKS  ${[...links.values()].length} (${Object.entries(byKind).map(([k, v]) => `${k} ${v}`).join(', ')})`);
 const describedFiles = included.filter((f) => fileDesc.get(f.path)?.d || f.desc).length;
 const describedRoutes = routesIn.filter((r) => routeDesc.get(routeKey(r))?.d || r.desc).length;
-const noSummary = nodes.filter((n) => n?.id && !isStr(n.summary)).map((n) => n.id);
+const noSummary = nodes.filter((n) => n?.id && !isStr(n.summary) && !fixedParts.get(n.id)?.d).map((n) => n.id);
 const reviewCount = [...fileDesc.values(), ...routeDesc.values()].filter((d) => d.review).length;
 report.push(`DESCRIPTIONS  files ${describedFiles}/${included.length} · routes ${describedRoutes}/${routesIn.length} · modules ${nodes.length - noSummary.length}/${nodes.length}${reviewCount ? ` · ${reviewCount} need review (code changed)` : ''}`);
 if (noSummary.length) report.push(`  modules without a summary: ${noSummary.slice(0, 12).join(', ')}${noSummary.length > 12 ? '…' : ''}`);
 if (describedFiles < included.length || describedRoutes < routesIn.length || reviewCount) report.push(`  Run describe.mjs to get worksheets for the ${included.length - describedFiles} file(s) and ${routesIn.length - describedRoutes} route(s) still missing descriptions.`);
+const nFixed = fixedParts.size + fixedFiles.size + fixedRoutes.size;
+if (nFixed) report.push(`NAMES  ${nFixed} fixed in names.json (${[[fixedParts.size, 'part'], [fixedFiles.size, 'file'], [fixedRoutes.size, 'endpoint']].filter(([n]) => n).map(([n, w]) => `${n} ${w}${n === 1 ? '' : 's'}`).join(', ')})`);
 
 if (errors.length) { console.log(report.join('\n')); console.log('\nFix the errors above and run build again.'); process.exit(1); }
 if (args.check) { console.log(report.join('\n')); process.exit(0); }
@@ -391,11 +449,15 @@ const graph = {
   },
   project: arch.project,
   nodes: [
-    ...nodes.map((n) => ({
-      id: n.id, parent: n.parent || null, label: n.label, kind: n.kind, summary: n.summary || '', details: n.details || '',
-      tags: n.tags || [], paths: n.paths || [], packages: n.packages || [], hosts: n.hosts || [],
-      stats: { ...stats.get(n.id), repos: [...stats.get(n.id).repos] },
-    })),
+    ...nodes.map((n) => {
+      const fx = fixedParts.get(n.id);
+      return {
+        id: n.id, parent: n.parent || null, label: fx?.name || n.label, kind: n.kind, summary: fx?.d || n.summary || '', details: n.details || '',
+        tags: n.tags || [], paths: n.paths || [], packages: n.packages || [], hosts: n.hosts || [],
+        stats: { ...stats.get(n.id), repos: [...stats.get(n.id).repos] },
+        ...(fx ? { fixed: fx.fixed } : {}),
+      };
+    }),
     ...(unassigned.length ? [{ id: 'unassigned', parent: null, label: words['unassigned.label'], kind: 'misc', summary: words['unassigned.summary'], details: '', tags: [], paths: [], packages: [], hosts: [], stats: { ...stats.get('unassigned'), repos: [...stats.get('unassigned').repos] } }] : []),
   ],
   files: included.map((f) => {
@@ -406,6 +468,7 @@ const graph = {
       ...(f.doc ? { doc: f.doc } : {}),
       ...(f.tooLarge ? { tooLarge: true } : {}),
       ...(d?.review ? { review: d.review } : {}),
+      ...(d?.fixed ? { fixed: d.fixed } : {}),
       ...(f.h ? { h: f.h, sig: f.sig } : {}),
       ...(f.symbols ? { s: f.symbols.map((s) => [s.name, s.kind, s.line, s.default ? 1 : 0, s.doc || '']) } : {}),
       ...(notes.has(f.path) ? notes.get(f.path) : {}),
@@ -413,7 +476,7 @@ const graph = {
   }),
   routes: routesIn.map((r) => {
     const d = routeDesc.get(routeKey(r));
-    return { f: r.file, m: r.method, p: r.path, l: r.line, h: r.handler || null, name: d?.name || r.name || fallbackRouteName(r), d: d?.d || r.desc || r.doc || '', ...(d?.d || r.desc ? {} : { auto: true }), ...(d?.review ? { review: d.review } : {}), ...(r.doc ? { doc: r.doc } : {}), ...(r.access ? { access: r.access } : {}), ...(r.who ? { who: r.who } : {}), ...(r.publicBecause ? { publicBecause: r.publicBecause } : {}) };
+    return { f: r.file, m: r.method, p: r.path, l: r.line, h: r.handler || null, name: d?.name || r.name || fallbackRouteName(r), d: d?.d || r.desc || r.doc || '', ...(d?.d || r.desc ? {} : { auto: true }), ...(d?.review ? { review: d.review } : {}), ...(d?.fixed ? { fixed: d.fixed } : {}), ...(r.doc ? { doc: r.doc } : {}), ...(r.access ? { access: r.access } : {}), ...(r.who ? { who: r.who } : {}), ...(r.publicBecause ? { publicBecause: r.publicBecause } : {}) };
   }),
   links: [...links.values()],
   flows: outFlows,

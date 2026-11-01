@@ -134,6 +134,23 @@ if (fs.existsSync(descDir)) {
   }
 }
 
+// ---------- 4b. names fixed in names.json: reported, never re-keyed ----------
+// The owner fixed these names, so a refresh doesn't carry them to a new path the way it does descriptions/: it says
+// what moved or went away, and the AI (or the owner) updates names.json by hand. The build reports the same entries.
+const fixedMoves = [];
+let names = null;
+try { names = JSON.parse(fs.readFileSync(path.join(outDir, 'names.json'), 'utf8')); } catch {}
+if (names && typeof names === 'object') {
+  for (const p of Object.keys(names.files || {})) {
+    if (renames.has(p)) fixedMoves.push(`"${p}" moved to "${renames.get(p)}"`);
+    else if (deleted.includes(p)) fixedMoves.push(`"${p}" was deleted`);
+  }
+  for (const k of Object.keys(names.routes || {})) {
+    if (routeMoves.has(k)) fixedMoves.push(`"${k}" is now "${routeMoves.get(k)}"`);
+    else if (oldRouteKeys.has(k) && !newRouteKeys.has(k)) fixedMoves.push(`"${k}" no longer exists`);
+  }
+}
+
 // what changed since the last build, for recent.mjs (marking recent work on the map)
 fs.writeFileSync(path.join(outDir, '.cache', 'changes.json'), JSON.stringify({
   since: old.meta.generatedAt, at: new Date().toISOString(),
@@ -166,6 +183,7 @@ L.push('BUILD');
 L.push(buildOut.split('\n').filter((l) => /^(✗|!|  - |ASSIGNMENT|  unassigned|    |DESCRIPTIONS|  Run describe|✓)/.test(l)).slice(0, 40).join('\n'));
 L.push('');
 const todo = [];
+if (fixedMoves.length) todo.push(`names.json fixes names that the refresh doesn't move: ${fixedMoves.join('; ')}. Move each entry to its new path or address in floorplan/names.json, or remove it if the file or endpoint is gone, and tell the user which fixed names you moved or removed; then run build.mjs.`);
 if (!buildOk) todo.push('Fix the build errors above in architecture.json (usually a flow step or annotation pointing at a deleted file), then run build.mjs.');
 if (/unassigned, by directory/.test(buildOut)) todo.push('New files landed outside every node: add globs (or a node) in architecture.json for the directories listed under "unassigned".');
 if (/Run describe/.test(buildOut)) todo.push('Run describe.mjs: it writes worksheets for only the new and flagged items. Fill them in (drop each "review" field once the entry is accurate), then run build.mjs.');

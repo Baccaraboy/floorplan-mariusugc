@@ -85,7 +85,8 @@ After every make or update, the AI records what was just worked on in `recent-wo
 It then:
 - carries descriptions over to moved and renamed files and endpoints;
 - drops entries for deleted files;
-- flags entries whose signature changed, for review.
+- flags entries whose signature changed, for review;
+- leaves names fixed in `names.json` alone, and lists any whose file moved or went away.
 
 Then it rebuilds. The AI only has to describe what's new or flagged, and check the structure if the change was large. That's why updates are quick.
 
