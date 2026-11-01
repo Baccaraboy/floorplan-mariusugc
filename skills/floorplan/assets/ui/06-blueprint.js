@@ -6,8 +6,8 @@
   const SC = window.Floorplan;
   const BP = SC && SC.graph.meta.blueprint;
   if (!BP) return;
-  const { h } = SC;
-  const Cap = (t) => t[0].toUpperCase() + t.slice(1);
+  const { h, t } = SC;
+  const Cap = (s) => s[0].toUpperCase() + s.slice(1);
   const A = SC.agent || { name: 'Claude', app: 'Claude Code' };
   const G = SC.graph;
 
@@ -26,21 +26,22 @@
   const addPill = () => {
     const k = document.querySelector('#context .k');
     if (!k || k.querySelector('.bp-pill')) return;
-    k.insertAdjacentHTML('beforeend', '<span class="bp-pill" title="Planned, not built yet: every card is a part the system would need.">Blueprint</span>');
+    k.insertAdjacentHTML('beforeend', `<span class="bp-pill" title="${h(t('blueprint.pill.title'))}">${t('blueprint.pill')}</span>`);
   };
   SC.on('render', addPill);
   SC.on('ready', addPill);
 
-  const ACCESS = { public: 'anyone', 'signed-in': 'signed-in users', team: 'only the team that runs the service', webhook: 'the service that sends it, which must prove it', internal: 'only our own services' };
+  const ACCESS = { public: t('blueprint.access.public'), 'signed-in': t('blueprint.access.signedIn'), team: t('blueprint.access.team'), webhook: t('blueprint.access.webhook'), internal: t('blueprint.access.internal') };
   /** "for signed-in users: managers of that location", or the open question when nobody decided. */
-  const whoMay = (r) => !r.access ? 'who may use it isn’t decided yet: ask me'
-    : `for ${r.access === 'signed-in' && r.who ? r.who : ACCESS[r.access] || r.access}${r.publicBecause ? `, because ${r.publicBecause.replace(/\.$/, '')}` : ''}`;
+  const whoMay = (r) => !r.access ? t('blueprint.who.undecided')
+    : t(r.publicBecause ? 'blueprint.who.forBecause' : 'blueprint.who.for', { who: r.access === 'signed-in' && r.who ? r.who : ACCESS[r.access] || r.access, because: (r.publicBecause || '').replace(/\.$/, '') });
+  const BUILD_WITH = t('blueprint.buildWith', { name: A.name });
 
   SC.addPanelSection('overview', () => ({
-    html: `<div class="sec"><h3>Blueprint</h3>
-      <p class="pd">Planned${BP.source ? ` from <b>${h(BP.source)}</b>` : ''}, not built yet. Every dashed card is a part the system would need.${SC.exported ? '' : ` Pick one and choose <b>Build this with ${h(A.name)}</b> to start on it.`}</p>
+    html: `<div class="sec"><h3>${t('blueprint.title')}</h3>
+      <p class="pd">${BP.source ? t('blueprint.plannedFrom', { source: h(BP.source) }) : t('blueprint.planned')}${SC.exported ? '' : ` ${t('blueprint.pickOne', { button: h(BUILD_WITH) })}`}</p>
       ${BP.stack?.length ? `<div class="tags" style="margin-top:10px">${BP.stack.map((s) => `<span class="tag">${h(s)}</span>`).join('')}</div>` : ''}
-      ${BP.assumptions?.length ? `<h3 style="margin-top:14px">Assumptions</h3><ul class="bp-list">${BP.assumptions.map((a) => `<li>${h(a)}</li>`).join('')}</ul>` : ''}
+      ${BP.assumptions?.length ? `<h3 style="margin-top:14px">${t('blueprint.assumptions')}</h3><ul class="bp-list">${BP.assumptions.map((a) => `<li>${h(a)}</li>`).join('')}</ul>` : ''}
     </div>`,
   }));
 
@@ -61,16 +62,16 @@
     const inside = (x) => x === id || paths.has(x) || (x.startsWith('r:') && paths.has('f:' + SC.routes[+x.slice(2)]?.f)) || (SC.exists(x) && SC.chain(x).includes(id));
     const questions = (G.health?.issues || []).filter((q) => q.kind === 'question' && (q.items || []).some(inside)).map((q) => q.title);
     return [
-      `Build "${i.name}" from the ${G.project.name} blueprint: floorplan/plan.json and floorplan/architecture.json${BP.source ? `, planned from ${BP.source}` : ''}.`,
-      i.desc ? `\nWhat it's for: ${i.desc}` : '',
-      BP.stack?.length ? `\nStack: ${BP.stack.join('; ')}.` : '',
-      `\nFiles to create:`,
+      t(BP.source ? 'blueprint.prompt.buildFrom' : 'blueprint.prompt.build', { name: i.name, project: G.project.name, source: BP.source }),
+      i.desc ? `\n${t('blueprint.prompt.for', { desc: i.desc })}` : '',
+      BP.stack?.length ? `\n${t('blueprint.prompt.stack', { stack: BP.stack.join('; ') })}` : '',
+      `\n${t('blueprint.prompt.files')}`,
       ...fl.map((f) => `- ${f.p}: ${f.name}${f.d ? `. ${f.d}` : ''}`),
-      eps.length ? `\nEndpoints to create (keep the method, path and who may use them exactly as planned):` : '',
+      eps.length ? `\n${t('blueprint.prompt.endpoints')}` : '',
       ...eps.map((r) => `- ${r.m} ${r.p} (${whoMay(r)}): ${r.name}${r.d ? `. ${r.d}` : ''}`),
-      deps.size ? `\nIt relies on: ${[...deps.values()].join('; ')}.` : '',
-      questions.length ? `\nStill undecided (ask me before building what depends on it):\n${questions.map((q) => `- ${q}`).join('\n')}` : '',
-      `\nBefore writing code, read these parts of plan.json, and check which of the things it relies on exist yet; if some don't, tell me and suggest what to build first. Keep the plan's file paths and names. If the plan looks wrong or incomplete for this part, tell me before changing it. When it's done, run it or its tests and tell me how to try it.`,
+      deps.size ? `\n${t('blueprint.prompt.relies', { deps: [...deps.values()].join('; ') })}` : '',
+      questions.length ? `\n${t('blueprint.prompt.undecided')}\n${questions.map((q) => `- ${q}`).join('\n')}` : '',
+      `\n${t('blueprint.prompt.before')}`,
     ].filter((x) => x !== '').join('\n');
   }
 
@@ -80,21 +81,21 @@
     if (id.startsWith('r:')) {
       const r = SC.routes[+id.slice(2)];
       if (!r) return '';
-      const text = !r.access ? `Not decided yet.${SC.graph.health ? ' The design review lists it.' : ''}` : `${Cap(r.access === 'signed-in' && r.who ? r.who : ACCESS[r.access] || r.access)}.${r.publicBecause ? ` Open on purpose: ${r.publicBecause}` : ''}`;
-      return `<div class="sec"><h3>Who may use it</h3><p class="pd">${h(text)}</p></div>`;
+      const text = !r.access ? `${t('blueprint.notDecided')}${SC.graph.health ? ` ${t('blueprint.reviewLists')}` : ''}` : `${Cap(r.access === 'signed-in' && r.who ? r.who : ACCESS[r.access] || r.access)}.${r.publicBecause ? ` ${t('blueprint.openOnPurpose', { because: r.publicBecause })}` : ''}`;
+      return `<div class="sec"><h3>${t('blueprint.whoMay')}</h3><p class="pd">${h(text)}</p></div>`;
     }
     const i = SC.info(id);
     if (SC.exported || !i || (i.type === 'node' && i.n.kind === 'external') || !filesIn(id).length) return '';
     return {
-      html: `<div class="sec"><h3>Build it</h3><p class="pd">A ready request for ${h(A.app)} to build ${i.type === 'file' ? 'this file' : 'this part'} the way the plan describes.</p>
-        <div class="actions"><button class="btn soft" data-bp-build>${SC.iconI('spark')}Build this with ${h(A.name)}</button></div></div>`,
+      html: `<div class="sec"><h3>${t('blueprint.buildIt')}</h3><p class="pd">${t(i.type === 'file' ? 'blueprint.readyFile' : 'blueprint.readyPart', { app: h(A.app) })}</p>
+        <div class="actions"><button class="btn soft" data-bp-build>${SC.iconI('spark')}${h(BUILD_WITH)}</button></div></div>`,
       bind: (el) => el.querySelector('[data-bp-build]')?.addEventListener('click', (ev) => {
         ev.stopPropagation();
         const prompt = buildPrompt(id);
         SC.modal({
-          title: `Build this with ${A.name}`,
-          html: `<p class="hc-hint">Copy this request and paste it into <b>${h(A.app)}</b>, opened in your project folder.</p><pre>${h(prompt)}</pre>`,
-          actions: [{ label: 'Copy prompt', primary: true, icon: 'copy', onClick: () => { SC.copy(prompt); SC.toast(`Copied. Paste it into ${A.app}.`); } }],
+          title: BUILD_WITH,
+          html: `<p class="hc-hint">${t('blueprint.copyHint', { app: h(A.app) })}</p><pre>${h(prompt)}</pre>`,
+          actions: [{ label: t('common.copyPrompt'), primary: true, icon: 'copy', onClick: () => { SC.copy(prompt); SC.toast(t('common.copiedPaste', { app: A.app })); } }],
         });
       }),
     };

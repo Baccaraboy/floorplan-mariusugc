@@ -6,6 +6,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { git, parseArgs, mapDir } from './lib/common.mjs';
+import { languageNote } from './lib/lang.mjs';
 
 const args = parseArgs(process.argv.slice(2));
 const root = path.resolve(args._[0] || '.');
@@ -77,4 +78,7 @@ L.push('', 'Write floorplan/recent-work.json (refs: a file path, a node id, or "
   '  { "tasks": [ { "title": "…", "request": "what the user asked for", "summary": "what was done toward it, and where it stands",',
   '      "items": [ { "ref": "<file path>", "change": "changed|new", "note": "what changed here, and how it serves the request" } ] } ] }',
   'Then run build.mjs. Use { "tasks": [] } when nothing was worked on.');
+// the map's language (graph.meta.lang): the titles, summaries and notes are written in it too
+const langNote = languageNote(G.meta?.lang);
+if (langNote) L.push(langNote);
 console.log(L.join('\n'));

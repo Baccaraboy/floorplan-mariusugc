@@ -6,57 +6,11 @@
   const SC = window.Floorplan;
   if (!SC) return;
 
-  // [display name, plain explanation, aliases...]. Aliases are matched as whole words, ignoring case,
-  // except those marked with a leading "=" (matched exactly, so "REST" doesn't fire on "the rest").
-  const TERMS = [
-    ['API', 'The way programs talk to each other: one asks for something (prices, an order) and the other answers.', 'API', 'APIs', 'API client'],
-    ['Endpoint', 'One specific request the app can receive, like "mark this order shipped"; each has its own web address.', 'endpoint', 'endpoints'],
-    ['Webhook', 'A message another service sends your app automatically when something happens there, like "a payment went through".', 'webhook', 'webhooks'],
-    ['Server', 'A computer in the cloud that runs your app\'s behind-the-scenes work and answers requests from the screens.', 'server', 'servers', 'main server'],
-    ['Frontend', 'The part of the app people see and click: the screens, buttons and forms in the browser.', 'frontend', 'front end', 'front-end'],
-    ['Backend', 'The behind-the-scenes part of the app that stores the records, applies the rules and talks to other services.', 'backend', 'back end', 'back-end'],
-    ['Database', 'Where the app keeps its records (products, orders, customers) so nothing is lost when it restarts.', 'database', 'databases', 'DB'],
-    ['Record', 'One saved entry in the database, like a single order or customer; a table is the list of all records of one kind.', 'database record', 'database records', 'database table', 'database tables'],
-    ['Model', 'In code, a model describes how one kind of record (an order, a customer) is stored in the database.', 'model', 'models', 'ORM', 'ORM model', 'ORM models', 'data model'],
-    ['Query', 'A question the app asks the database, like "all orders from today that haven\'t shipped".', 'query', 'queries'],
-    ['Queue', 'A waiting line of tasks; work is dropped in and handled one by one in the background so nothing gets lost.', 'queue', 'queues', 'queued', 'outbox', 'message queue'],
-    ['Background job', 'A task that runs on its own behind the scenes, so people don\'t have to wait for it on screen.', 'background job', 'background jobs', 'background task', 'background tasks', 'worker', 'workers'],
-    ['Scheduled job', 'A task that runs automatically on a timetable, like every hour or every night.', 'cron', 'cron job', 'cron jobs', 'scheduled job', 'scheduled jobs', 'scheduler'],
-    ['Environment variable', 'A setting stored outside the code, such as which database or account to use, so it can differ between test and live.', 'environment variable', 'environment variables', 'env var', 'env vars', '.env'],
-    ['Secret', 'A password or key the app uses to sign in to another service; it must never be shared or put in the code.', 'secret', 'secrets', 'API key', 'API keys', 'credentials'],
-    ['Deploy', 'Putting a new version of the app live so people start using it.', 'deploy', 'deploys', 'deployed', 'deployment', 'deployments'],
-    ['Migration', 'A one-time change to how records are stored, like adding a new field to every order.', 'migration', 'migrations'],
-    ['Cache', 'A saved copy of something kept close by so it loads faster instead of being worked out again.', 'cache', 'cached', 'caching'],
-    ['Sign-in', 'Checking who someone is (usually with a password) before letting them in.', 'auth', 'authentication', 'login', 'log in', 'sign-in', 'sign in'],
-    ['Permissions', 'The rules for who is allowed to do what, like only managers issuing refunds.', 'permissions', 'authorization', 'roles', 'RBAC'],
-    ['Session', 'How the app remembers you are signed in, so you don\'t have to type your password on every screen.', 'session', 'sessions'],
-    ['Token', 'A temporary digital pass the app hands out after sign-in and checks on every request.', 'token', 'tokens', 'bearer token', 'access token'],
-    ['SDK', 'A ready-made kit of code a company provides so apps can talk to its service more easily.', 'SDK', 'SDKs'],
-    ['Repository', 'The folder that holds all of a project\'s code and its full history of changes.', 'repository', 'repositories', 'repo', 'repos'],
-    ['Component', 'A reusable building block of the screens, like a button, a table or a whole product editor.', 'component', 'components'],
-    ['Route', 'A web address the app answers: on the screens it\'s a page, on the server it\'s a kind of request.', 'route', 'routes', 'routing', 'App Router'],
-    ['Request', 'A message asking the server to do or fetch something; the server sends back a response with the result.', 'request', 'requests', 'response', 'responses'],
-    ['JSON', 'A simple text format programs use to send data to each other, like a labelled list.', 'JSON'],
-    ['REST', 'A common style for building APIs, where each web address stands for a kind of thing (orders, products).', '=REST', '=RESTful'],
-    ['HTTP method', 'The kind of request: GET reads something, POST creates, PUT or PATCH changes, DELETE removes.', 'HTTP method', 'HTTP methods', '=GET', '=POST', '=PUT', '=PATCH', '=DELETE'],
-    ['HTTP', 'The language browsers and servers use to talk over the web; HTTPS is the encrypted version.', 'HTTP', 'HTTPS'],
-    ['CDN', 'A network of servers around the world that delivers images and files quickly from somewhere near the visitor.', 'CDN', 'CDNs'],
-    ['Storage bucket', 'Cloud file storage for things like product images, uploads and exports.', 'storage bucket', 'bucket', 'buckets', 'S3', 'GCS', 'Cloud Storage'],
-    ['Pub/Sub', 'Google\'s message service: one part of the app posts an event and others pick it up to handle in the background.', 'Pub/Sub', 'PubSub'],
-    ['MCP', 'A standard way to connect AI assistants (like Claude or ChatGPT) to an app so they can look things up in it.', 'MCP', 'MCP server', 'Model Context Protocol'],
-    ['Next.js', 'A popular toolkit for building websites and web apps with React.', 'Next.js', 'NextJS'],
-    ['React', 'A popular library for building interactive screens out of reusable pieces.', '=React'],
-    ['Flask', 'A Python toolkit for building web servers.', 'Flask'],
-    ['SQLAlchemy', 'A Python toolkit that lets the code read and save database records without writing raw database commands.', 'SQLAlchemy'],
-    ['Postgres', 'A widely used database; RDS and Cloud SQL are Amazon\'s and Google\'s hosted versions of it.', 'Postgres', 'PostgreSQL', 'RDS', 'Cloud SQL'],
-    ['Docker', 'A way to package an app with everything it needs so it runs the same on any computer or cloud.', 'Docker', 'container', 'containers'],
-    ['Cloud Run', 'Google\'s service for running an app\'s servers and background jobs in the cloud without managing machines.', 'Cloud Run'],
-    ['Middleware', 'A check every request passes through on its way in, such as "is this person signed in?".', 'middleware'],
-    ['Blueprint', 'In Flask, a group of related requests bundled together, like all the order requests.', 'blueprint', 'blueprints'],
-    ['Tests', 'Automatic checks that the code still does what it should, run before changes go live.', 'test suite', 'unit test', 'unit tests', 'pytest', 'Vitest'],
-    ['Script', 'A small program run by hand for a one-off job, like fixing or importing data.', 'script', 'scripts'],
-    ['OAuth', 'The standard behind "Sign in with…" buttons: it lets one app use another on your behalf without sharing your password.', 'OAuth'],
-  ];
+  // [display name, plain explanation, aliases...], from the map's language table: glossary.<id>.term, .text and
+  // .match (the aliases, "|" between them), so each language explains and finds its own words. Aliases are matched
+  // as whole words, ignoring case, except those marked with a leading "=" (matched exactly, so "REST" doesn't fire on "the rest").
+  const TERMS = SC.keys('glossary.').filter((k) => k.endsWith('.term')).map((k) => k.slice(0, -'.term'.length))
+    .map((g) => [SC.t(`${g}.term`), SC.t(`${g}.text`), ...SC.t(`${g}.match`).split('|')]);
 
   const exact = new Map(), loose = new Map(), alts = [];
   TERMS.forEach(([name, text, ...aliases], i) => {
@@ -69,7 +23,8 @@
   });
   const esc = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
   alts.sort((a, b) => b.length - a.length);
-  const RE = new RegExp(`(?<![\\w./-])(?:${alts.map(esc).join('|')})(?![\\w/]|-\\w|\\.\\w)`, 'gi');
+  // a word character is any letter or digit, not just a–z, so "Datenbank" doesn't fire inside "Datenbankänderung"
+  const RE = new RegExp(`(?<![\\p{L}\\p{N}_./-])(?:${alts.map(esc).join('|')})(?![\\p{L}\\p{N}_/]|-[\\p{L}\\p{N}_]|\\.[\\p{L}\\p{N}_])`, 'giu');
   const termOf = (m) => exact.has(m) ? exact.get(m) : loose.has(m.toLowerCase()) ? loose.get(m.toLowerCase()) : -1;
 
   // Where to look, and what to leave alone.

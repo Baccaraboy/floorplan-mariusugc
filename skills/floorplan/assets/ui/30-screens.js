@@ -8,7 +8,7 @@
   // pages that only bounce you elsewhere have nothing behind them worth a board
   const screens = (G.screens || []).filter((s) => s && s.url && Array.isArray(s.behind) && s.behind.length && !(s.behind.length < 2 && /redirect/i.test(`${s.name} ${s.description}`)));
   if (!screens.length) return;
-  const { h } = SC;
+  const { h, t } = SC;
 
   const style = document.createElement('style');
   style.textContent = `
@@ -27,7 +27,7 @@
 
   // ---------- data ----------
   const topLabel = new Map(G.nodes.filter((n) => !n.parent).map((n) => [n.id, n.label]));
-  const appName = (id) => topLabel.get(id) || (id === 'unassigned' ? 'Other' : id);
+  const appName = (id) => topLabel.get(id) || (id === 'unassigned' ? t('screens.other') : id);
   const byApp = new Map();
   for (const s of screens) { if (!byApp.has(s.app)) byApp.set(s.app, []); byApp.get(s.app).push(s); }
   const byFile = new Map();
@@ -46,7 +46,7 @@
     // a short walkthrough: the screen → its first request → the server code → where it ends up
     const firstOf = (kind) => items.find((b) => b.kind === kind);
     const steps = [firstOf('screen'), firstOf('request'), firstOf('server'), firstOf('data') || firstOf('outside')].filter(Boolean);
-    SC.showBoard({ kind: 'Screen', icon: 'ui', title: s.name, question: 'Everything behind ' + s.url, items, steps: steps.length >= 3 ? steps : [] });
+    SC.showBoard({ kind: t('screens.kind'), icon: 'ui', title: s.name, question: t('screens.everythingBehind', { url: s.url }), items, steps: steps.length >= 3 ? steps : [] });
   }
 
   // ---------- header menu ----------
@@ -68,14 +68,14 @@
       for (const s of rows) html += `<button class="sc-r" data-sc="${h(s.id)}"><b>${h(s.name)}</b><span>${h(s.url)}</span></button>`;
       shown += rows.length;
     }
-    if (!shown) html = `<div class="sc-none">No screen matches “${h(q)}”.</div>`;
+    if (!shown) html = `<div class="sc-none">${t('screens.none', { q: h(q) })}</div>`;
     const list = menu.querySelector('.sc-l');
     list.innerHTML = html;
     list.querySelectorAll('[data-sc]').forEach((b) => b.onclick = (ev) => { ev.stopPropagation(); showScreen(screens.find((s) => s.id === b.dataset.sc)); });
     list.querySelector('.sc-r')?.classList.add('on');
   }
   function renderMenu() {
-    menu.innerHTML = `${many ? '<div class="sc-f"><input id="sc-q" placeholder="Find a screen…" spellcheck="false" autocomplete="off"></div>' : ''}<div class="sc-l"></div>`;
+    menu.innerHTML = `${many ? `<div class="sc-f"><input id="sc-q" placeholder="${h(t('screens.find'))}" spellcheck="false" autocomplete="off"></div>` : ''}<div class="sc-l"></div>`;
     renderList('');
     const input = menu.querySelector('#sc-q');
     if (!input) return;
@@ -109,7 +109,7 @@
   function closeMenu() { menu.classList.remove('open'); }
   const isOpen = () => menu.classList.contains('open');
 
-  btn = SC.addHeaderButton({ id: 'screens-btn', label: 'Screens', icon: 'ui', title: 'Pick a screen of the app to see everything behind it', onClick: () => (isOpen() ? closeMenu() : openMenu()) });
+  btn = SC.addHeaderButton({ id: 'screens-btn', label: t('screens.button'), icon: 'ui', title: t('screens.button.title'), onClick: () => (isOpen() ? closeMenu() : openMenu()) });
   window.addEventListener('pointerdown', (ev) => { if (isOpen() && !menu.contains(ev.target) && !btn.contains(ev.target)) closeMenu(); }, true);
   window.addEventListener('keydown', (ev) => {
     if (!isOpen()) return;
@@ -127,12 +127,12 @@
     const on = (usedBy.get(id) || []).filter((s) => !own.includes(s));
     if (!own.length && !on.length) return null;
     let html = '';
-    if (own.length) html += `<div class="sec"><h3>This is a screen</h3><div class="list">${own.map((s) => row(s, 'See everything behind this screen')).join('')}</div></div>`;
-    if (on.length) html += `<div class="sec"><h3>Behind these screens <span class="c">${on.length}</span></h3><div class="list">${on.slice(0, 8).map((s) => row(s)).join('')}</div></div>`;
+    if (own.length) html += `<div class="sec"><h3>${t('screens.isScreen')}</h3><div class="list">${own.map((s) => row(s, t('screens.seeBehind'))).join('')}</div></div>`;
+    if (on.length) html += `<div class="sec"><h3>${t('screens.behindThese')} <span class="c">${on.length}</span></h3><div class="list">${on.slice(0, 8).map((s) => row(s)).join('')}</div></div>`;
     return { html, bind: bindRows };
   });
   SC.addPanelSection('overview', () => ({
-    html: `<div class="sec"><h3>Screens <span class="c">${screens.length}</span></h3><div class="list"><a class="row" data-sc-open><span class="dot" style="background:var(--n-ui)"></span><span class="rt"><div class="rn">Start from a screen</div><div class="rd">Pick a page of the app to see the parts on it, the requests it makes and the server code behind them.</div></span></a></div></div>`,
+    html: `<div class="sec"><h3>${t('screens.title')} <span class="c">${screens.length}</span></h3><div class="list"><a class="row" data-sc-open><span class="dot" style="background:var(--n-ui)"></span><span class="rt"><div class="rn">${t('screens.start')}</div><div class="rd">${t('screens.start.hint')}</div></span></a></div></div>`,
     bind: (el) => el?.querySelector('[data-sc-open]')?.addEventListener('click', (ev) => { ev.preventDefault(); ev.stopPropagation(); openMenu(); }),
   }));
 

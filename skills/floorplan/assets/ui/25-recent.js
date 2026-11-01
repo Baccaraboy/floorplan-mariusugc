@@ -6,7 +6,7 @@
   const SC = window.Floorplan;
   const R = SC && SC.graph.recent;
   if (!R || !R.items || !R.items.length) return;
-  const { h } = SC;
+  const { h, t, tn } = SC;
   const tasks = R.tasks || [];
   const items = R.items.filter((it) => SC.exists(it.id));
   if (!items.length) return;
@@ -33,25 +33,26 @@
   document.head.appendChild(style);
 
   const ago = (iso) => {
-    const t = Date.parse(iso); if (!t) return '';
-    const m = Math.round((Date.now() - t) / 60000);
-    return m < 2 ? 'just now' : m < 60 ? `${m} minutes ago` : m < 48 * 60 ? `${Math.round(m / 60)} hours ago` : `${Math.round(m / 1440)} days ago`;
+    const at = Date.parse(iso); if (!at) return '';
+    const m = Math.round((Date.now() - at) / 60000);
+    return m < 2 ? t('recent.ago.now') : m < 60 ? tn('recent.ago.minutes', m) : m < 48 * 60 ? tn('recent.ago.hours', Math.round(m / 60)) : tn('recent.ago.days', Math.round(m / 1440));
   };
   const itemsOf = (ti) => items.filter((it) => ti == null || it.task === ti);
+  const changeWord = (it) => (it.change === 'new' ? t('recent.new') : t('recent.changed'));
 
   /** One board with just the changed cards (and how they connect), each with its note. */
   function showRecent(ti) {
     const one = ti != null ? tasks[ti] : tasks.length === 1 ? tasks[0] : null;
     SC.showBoard({
-      kind: 'Recent work', icon: 'recent',
-      title: one ? one.title : 'Recent work',
-      question: one ? (one.request ? `You asked: ${one.request}` : '') : tasks.map((t) => t.title).join(' · '),
-      answer: one ? one.summary : tasks.map((t) => `**${t.title}.** ${t.summary}`).join('\n\n'),
-      items: itemsOf(ti != null ? ti : null).map((it) => ({ id: it.id, note: it.note || (it.change === 'new' ? 'New' : 'Changed') })),
+      kind: t('recent.title'), icon: 'recent',
+      title: one ? one.title : t('recent.title'),
+      question: one ? (one.request ? t('recent.youAsked', { request: one.request }) : '') : tasks.map((x) => x.title).join(' · '),
+      answer: one ? one.summary : tasks.map((x) => `**${x.title}.** ${x.summary}`).join('\n\n'),
+      items: itemsOf(ti != null ? ti : null).map((it) => ({ id: it.id, note: it.note || changeWord(it) })),
     });
   }
 
-  const btn = SC.addHeaderButton({ id: 'btn-recent', label: 'Recent work', icon: 'recent', title: 'What was just worked on, on one board', onClick: () => showRecent() });
+  const btn = SC.addHeaderButton({ id: 'btn-recent', label: t('recent.title'), icon: 'recent', title: t('recent.button.title'), onClick: () => showRecent() });
   const b = document.createElement('span');
   b.className = 'badge';
   b.textContent = String(items.length);
@@ -60,11 +61,11 @@
   // codebase panel: each task, what was asked, what was done, and a way to see its cards
   SC.addPanelSection('overview', () => ({
     top: true,
-    html: `<div class="sec"><h3>Recent work <span class="c">${items.length}</span></h3>${R.updatedAt ? `<div class="rw-when">Updated ${h(ago(R.updatedAt))}</div>` : ''}<div style="margin-top:10px">${tasks.map((t, i) => itemsOf(i).length ? `
-      <div class="rw-task"><div class="rw-tt">${h(t.title)}</div>
-        ${t.request ? `<div class="rw-q"><b>You asked:</b> ${h(t.request)}</div>` : ''}
-        ${t.summary ? `<div class="rw-s">${h(t.summary)}</div>` : ''}
-        <div class="rw-a"><button class="btn soft" data-rw="${i}">${SC.iconI('recent')}Show ${SC.plural(itemsOf(i).length, 'card')}</button></div></div>` : '').join('')}</div></div>`,
+    html: `<div class="sec"><h3>${t('recent.title')} <span class="c">${items.length}</span></h3>${R.updatedAt ? `<div class="rw-when">${t('recent.updated', { ago: h(ago(R.updatedAt)) })}</div>` : ''}<div style="margin-top:10px">${tasks.map((task, i) => itemsOf(i).length ? `
+      <div class="rw-task"><div class="rw-tt">${h(task.title)}</div>
+        ${task.request ? `<div class="rw-q"><b>${t('recent.youAskedLabel')}</b> ${h(task.request)}</div>` : ''}
+        ${task.summary ? `<div class="rw-s">${h(task.summary)}</div>` : ''}
+        <div class="rw-a"><button class="btn soft" data-rw="${i}">${SC.iconI('recent')}${t('recent.showCards', { cards: tn('count.card', itemsOf(i).length) })}</button></div></div>` : '').join('')}</div></div>`,
     bind: (el) => el.querySelectorAll('[data-rw]').forEach((x) => x.addEventListener('click', () => showRecent(+x.dataset.rw))),
   }));
 
@@ -75,13 +76,13 @@
     const mine = items.filter((it) => it.id === key);
     const inside = items.filter((it) => it.id !== key && SC.chain(it.id).includes(key));
     if (!mine.length && !inside.length) return '';
-    if (!mine.length) return { top: true, html: `<div class="sec"><h3>Recent work inside <span class="c">${inside.length}</span></h3><div class="list">${inside.map((it) => {
+    if (!mine.length) return { top: true, html: `<div class="sec"><h3>${t('recent.inside')} <span class="c">${inside.length}</span></h3><div class="list">${inside.map((it) => {
       const i = SC.info(it.id);
       return `<a class="row" data-go="${h(it.id)}"><span class="dot" style="background:var(--recent)"></span><span class="rt"><div class="rn">${h(i.name)}</div>${it.note ? `<div class="rd">${h(it.note)}</div>` : ''}</span></a>`;
     }).join('')}</div></div>` };
     return { top: true, html: `<div class="sec">${mine.map((it) => {
-      const t = tasks[it.task] || {};
-      return `<div class="rw-note"><div class="rw-h">${it.change === 'new' ? 'New' : 'Changed'} · ${h(t.title || 'Recent work')}</div>${h(it.note || '')}${t.request ? `<div class="rw-q" style="margin:6px 0 0"><b>You asked:</b> ${h(t.request)}</div>` : ''}</div>`;
+      const task = tasks[it.task] || {};
+      return `<div class="rw-note"><div class="rw-h">${changeWord(it)} · ${h(task.title || t('recent.title'))}</div>${h(it.note || '')}${task.request ? `<div class="rw-q" style="margin:6px 0 0"><b>${t('recent.youAskedLabel')}</b> ${h(task.request)}</div>` : ''}</div>`;
     }).join('')}</div>` };
   });
 

@@ -10,6 +10,7 @@
 | [Privacy and security](privacy-and-security.md) | What runs where, what leaves your machine, and how secrets are handled |
 | [Is it safe to install?](is-it-safe.md) | Everything Floorplan does on your computer, how a test enforces it, and how to verify your installed copy |
 | [Troubleshooting](troubleshooting.md) | Common problems and how to fix them |
+| [Languages](i18n.md) | Choosing the map's language, how the language tables work, and adding a new language |
 | [Developing Floorplan](development.md) | Repo layout, testing a local copy, releasing a new version |
 
 New here? Start with [Getting started](getting-started.md).

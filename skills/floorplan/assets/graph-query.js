@@ -215,6 +215,15 @@ const FLOORPLAN_CHANGE_SCHEMA = {
   required: ['title', 'summary', 'plan', 'architecture', 'changes'],
 };
 
+/** A map in another language than English ("lang" in architecture.json): the line asking the agent to write in it. */
+function floorplanLanguageLine(G) {
+  const code = G.meta?.lang;
+  if (!code || code === 'en') return [];
+  let name = code;
+  try { name = new Intl.DisplayNames(['en'], { type: 'language' }).of(code) || code; } catch {}
+  return [`The map is in ${name}: write every title, description, note, answer and follow-up in ${name}.`];
+}
+
 function floorplanChangeInstructions(G) {
   const src = G.meta?.blueprint?.source;
   return [
@@ -225,6 +234,7 @@ function floorplanChangeInstructions(G) {
     'Change only what the request needs, the way the rest of the plan is written: same stack and conventions, plain language for everyone, real file paths. Keep every other file, endpoint, id and description exactly as it is. If the PRD or plan already decided something, follow it; record a new choice in assumptions and a real open decision in questions. If the request removes something, remove everything that only it used. If it answers one of plan.json\'s questions, remove that question, build the answer into the plan, and record it in assumptions; if it settles who may use an endpoint, set access (and who or publicBecause). Many requests come from the map\'s design review: settle exactly what it names.',
     'Reply with JSON only: {"title", "summary", "plan", "architecture", "changes", "followups"}. plan and architecture are the complete updated files as JSON text, not just the changed parts. changes lists every new or changed file, endpoint ("METHOD /path") or node id with a note on how it serves the request.',
     'Do not edit any files yourself: the map server checks your JSON, saves it and redraws the map.',
+    ...floorplanLanguageLine(G),
   ].join('\n');
 }
 
@@ -237,6 +247,7 @@ function floorplanFlowInstructions(G, engine) {
     'Trace what the person asks for from its trigger (a user action, webhook, cron job) to its final effect (database write, external call, response).',
     'Use 3-9 steps. Prefer the most specific item that tells the story (an endpoint over its file, a file over its module), and make consecutive steps things that really call or import each other.',
     'Reply with JSON only: {"title", "description", "steps": [{"id", "note"}]}. Only use ids the map gave you.',
+    ...floorplanLanguageLine(G),
   ].join('\n');
 }
 
@@ -256,5 +267,6 @@ function floorplanAskInstructions(G, engine) {
     '- steps: an ordered walkthrough when the answer is a sequence (a request path, a data flow); otherwise [].',
     '- followups: 2-3 short follow-up questions.',
     'Only use ids that the map gave you.',
+    ...floorplanLanguageLine(G),
   ].filter(Boolean).join('\n');
 }
